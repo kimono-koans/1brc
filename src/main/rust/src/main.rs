@@ -41,9 +41,13 @@ struct StationMap {
 
 impl StationMap {
     fn new(path: PathBuf) -> Result<Self, Box<dyn Error>> {
+        static APPROXIMATE_TOTAL_CAPACITY: usize = 512;
+
         Ok(Self {
             path,
-            map: Arc::new(Mutex::new(HashMap::with_capacity(512))),
+            map: Arc::new(Mutex::new(HashMap::with_capacity(
+                APPROXIMATE_TOTAL_CAPACITY,
+            ))),
         })
     }
 
