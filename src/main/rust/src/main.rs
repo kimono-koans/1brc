@@ -15,78 +15,85 @@ fn main() {
 }
 
 fn try_main() -> Result<(), Box<dyn Error>> {
-    let map: HashMap<Box<str>, StationValues> = HashMap::with_capacity(1024);
-
     let path = std::env::args().skip(1).next().unwrap_or_else(|| {
         "/Users/rswinford/Programming/1brc.data/measurements-1000000000.txt".to_owned()
     });
 
-    let bytes = mmap_file(&path)?;
+    let map = StationMap::new(&path)?;
 
-    read_into_map(&bytes, &map)?;
+    map.read_bytes_into_map()?;
 
-    print_map(map)?;
-
-    Ok(())
-}
-
-fn mmap_file(path: &str) -> Result<Mmap, Box<dyn Error>> {
-    let file = File::open(path)?;
-    let mmap = unsafe { MmapOptions::new().map(&file)? };
-
-    Ok(mmap)
-}
-
-fn read_into_map(
-    bytes: &Mmap,
-    map: &HashMap<Box<str>, StationValues>,
-) -> Result<(), Box<dyn Error>> {
-    unsafe { std::str::from_utf8_unchecked(bytes) }
-        .par_lines()
-        .filter_map(|word| word.split_once(';'))
-        .filter_map(|(station, temp)| temp.parse::<f32>().ok().map(|parsed| (station, parsed)))
-        .for_each(|(station, float)| {
-            into_map(map, station, float);
-        });
-
-    map.shrink_to_fit();
+    map.print_map()?;
 
     Ok(())
 }
 
-fn into_map(map: &HashMap<Box<str>, StationValues>, station: &str, temp: f32) {
-    match map.get_mut(station) {
-        Some(mut value) => {
-            value.update(temp);
-        }
-        None => {
-            map.insert(Box::from(station), StationValues::from(temp));
+struct StationMap {
+    bytes: Mmap,
+    map: HashMap<Box<str>, StationValues>,
+}
+
+impl StationMap {
+    fn new(path: &str) -> Result<Self, Box<dyn Error>> {
+        let file = File::open(path)?;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+
+        Ok(Self {
+            bytes: mmap,
+            map: HashMap::with_capacity(1024),
+        })
+    }
+
+    fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
+        unsafe { std::str::from_utf8_unchecked(&self.bytes) }
+            .par_lines()
+            .filter_map(|line| line.split_once(';'))
+            .filter_map(|(station, temp)| temp.parse::<f32>().ok().map(|parsed| (station, parsed)))
+            .for_each(|(station, float)| {
+                self.insert_into_map(station, float);
+            });
+
+        self.map.shrink_to_fit();
+
+        Ok(())
+    }
+
+    fn insert_into_map(&self, station: &str, temp: f32) {
+        match self.map.get_mut(station) {
+            Some(mut value) => {
+                value.update(temp);
+            }
+            None => {
+                self.map
+                    .insert(Box::from(station), StationValues::from(temp));
+            }
         }
     }
-}
 
-fn print_map(map: HashMap<Box<str>, StationValues>) -> Result<(), Box<dyn Error>> {
-    let last: usize = map.len() - 1;
+    fn print_map(self) -> Result<(), Box<dyn Error>> {
+        let last: usize = self.map.len() - 1;
 
-    print!("{}", "{");
+        print!("{}", "{");
 
-    map.into_iter()
-        .enumerate()
-        .for_each(|(idx, (station, value))| {
-            if idx == 0 {
-                return print!("\n\t{}={}\n", station, value);
-            }
+        self.map
+            .into_iter()
+            .enumerate()
+            .for_each(|(idx, (station, value))| {
+                if idx == 0 {
+                    return print!("\n\t{}={}\n", station, value);
+                }
 
-            if idx == last {
-                return print!("\t{}={}\n", station, value);
-            }
+                if idx == last {
+                    return print!("\t{}={}\n", station, value);
+                }
 
-            print!("\t{}={},\n", station, value)
-        });
+                print!("\t{}={},\n", station, value)
+            });
 
-    println!("{}", "}");
+        println!("{}", "}");
 
-    Ok(())
+        Ok(())
+    }
 }
 
 struct StationValues {
