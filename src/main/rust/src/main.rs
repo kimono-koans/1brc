@@ -4,9 +4,10 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::{error::Error, fs::File};
 
-use dashmap::DashMap as HashMap;
+use hashbrown::HashMap;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -31,7 +32,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Arc<HashMap<Box<str>, StationValues>>,
+    map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
 }
 
 impl StationMap {
@@ -40,7 +41,7 @@ impl StationMap {
 
         Ok(Self {
             path,
-            map: Arc::new(HashMap::with_capacity(1024)),
+            map: Arc::new(Mutex::new(HashMap::with_capacity(1024))),
         })
     }
 
@@ -66,21 +67,24 @@ impl StationMap {
             let map_clone = self.map.clone();
 
             rayon::spawn(move || {
-                std::str::from_utf8(&bytes_buffer)
+                let iter = std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
                     .split(|byte| byte == '\n')
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
-                    })
-                    .for_each(|(station, float)| match map_clone.get_mut(station) {
-                        Some(mut value) => {
-                            value.update(float);
-                        }
-                        None => {
-                            map_clone.insert(Box::from(station), StationValues::from(float));
-                        }
                     });
+
+                let mut locked = map_clone.lock().unwrap();
+
+                iter.for_each(|(station, float)| match locked.get_mut(station) {
+                    Some(value) => {
+                        value.update(float);
+                    }
+                    None => {
+                        locked.insert(Box::from(station), StationValues::from(float));
+                    }
+                });
             });
         }
 
@@ -88,20 +92,22 @@ impl StationMap {
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
-        let last: usize = self.map.len() - 1;
+        let locked = self.map.lock().unwrap();
+
+        let last: usize = locked.len() - 1;
 
         print!("{}", "{");
 
-        self.map.iter().enumerate().for_each(|(idx, entry)| {
+        locked.iter().enumerate().for_each(|(idx, (key, value))| {
             if idx == 0 {
-                return print!("\n\t{}={}\n", entry.key(), entry.value());
+                return print!("\n\t{}={}\n", key, value);
             }
 
             if idx == last {
-                return print!("\t{}={}\n", entry.key(), entry.value());
+                return print!("\t{}={}\n", key, value);
             }
 
-            print!("\t{}={},\n", entry.key(), entry.value())
+            print!("\t{}={},\n", key, value)
         });
 
         println!("{}", "}");
@@ -150,6 +156,6 @@ impl StationValues {
 
 impl fmt::Display for StationValues {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}/{}", self.min, self.mean(), self.max)
+        write!(f, "{:.1}/{:.1}/{:.1}", self.min, self.mean(), self.max)
     }
 }
