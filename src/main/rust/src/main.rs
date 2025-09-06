@@ -66,7 +66,8 @@ impl StationMap {
             let map_clone = self.map.clone();
 
             rayon::spawn(move || {
-                unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
+                std::str::from_utf8(&bytes_buffer)
+                    .expect("Input bytes are not valid UTF8")
                     .split(|byte| byte == '\n')
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
@@ -82,8 +83,6 @@ impl StationMap {
                     });
             });
         }
-
-        self.map.shrink_to_fit();
 
         Ok(())
     }
