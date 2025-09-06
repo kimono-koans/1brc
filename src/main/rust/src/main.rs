@@ -75,7 +75,7 @@ impl StationMap {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
                     });
 
-                let mut locked = map_clone.lock().unwrap();
+                let mut locked = map_clone.lock().expect("Could not lock mutex");
 
                 iter.for_each(|(station, float)| match locked.get_mut(station) {
                     Some(value) => {
@@ -92,7 +92,7 @@ impl StationMap {
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
-        let locked = self.map.lock().unwrap();
+        let locked = self.map.lock().expect("Could not lock mutex");
 
         let last: usize = locked.len() - 1;
 
