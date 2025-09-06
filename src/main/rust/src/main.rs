@@ -66,7 +66,7 @@ impl StationMap {
     fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let optimum_buffer_size = Self::optimum_buffer(&file)?;
-        let mut reader = BufReader::with_capacity(optimum_buffer_size, file);
+        let mut reader: BufReader<File> = BufReader::with_capacity(optimum_buffer_size, file);
 
         loop {
             // first, read lots of bytes into the buffer
@@ -132,7 +132,7 @@ impl StationMap {
                 .try_for_each(|(key, value)| writeln!(&mut output_buf, "\t{}={},", key, value))?;
 
             if let Some(last) = opt_last {
-                writeln!(&mut output_buf, "\t{}={}", last.0, last.1)?;
+                writeln!(&mut output_buf, "{}={}", last.0, last.1)?;
             }
 
             writeln!(&mut output_buf, "}}")?;
