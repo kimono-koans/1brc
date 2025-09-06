@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
+use rayon::prelude::*;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -120,9 +121,12 @@ impl StationMap {
         let map_locked = self.map.lock().expect("Could not lock mutex");
         let last: usize = map_locked.len() - 1;
 
+        let mut sorted: Vec<_> = map_locked.iter().collect();
+        sorted.par_sort_unstable_by_key(|(k, _v)| *k);
+
         writeln!(&mut output_buf, "{{")?;
 
-        map_locked
+        sorted
             .iter()
             .enumerate()
             .try_for_each(|(idx, (key, value))| {
