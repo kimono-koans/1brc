@@ -43,14 +43,15 @@ impl StationMap {
     fn new(path: PathBuf) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             path,
-            map: Arc::new(Mutex::new(HashMap::with_capacity(1024))),
+            map: Arc::new(Mutex::new(HashMap::with_capacity(512))),
         })
     }
 
     fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
         let len = file.metadata()?.len();
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 512);
+        static REDUCTION_FACTOR: usize = 512;
+        let buf_capacity = len as usize / (count * REDUCTION_FACTOR);
 
         Ok(buf_capacity)
     }
