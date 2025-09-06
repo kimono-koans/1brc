@@ -1,5 +1,4 @@
 use core::fmt;
-use std::cmp::Ordering;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
@@ -165,11 +164,11 @@ impl From<f32> for StationValues {
 
 impl StationValues {
     fn update(&mut self, new_value: f32) {
-        if let Some(Ordering::Less) = f32::partial_cmp(&self.max, &new_value) {
+        if self.max.lt(&new_value) {
             self.max = new_value;
         }
 
-        if let Some(Ordering::Greater) = f32::partial_cmp(&self.min, &new_value) {
+        if self.min.gt(&new_value) {
             self.min = new_value
         }
 
