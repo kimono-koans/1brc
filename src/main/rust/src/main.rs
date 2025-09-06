@@ -50,7 +50,7 @@ impl StationMap {
     fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
         let len = file.metadata()?.len();
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 8);
+        let buf_capacity = len as usize / (count * 512);
 
         Ok(buf_capacity)
     }
@@ -78,25 +78,27 @@ impl StationMap {
             let map_clone = self.map.clone();
 
             rayon::spawn(move || {
-                std::str::from_utf8(&bytes_buffer)
+                let iter = std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
                     .split(|byte| byte == '\n')
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
-                    })
-                    .for_each(|(station, float)| {
-                        let mut locked = map_clone.lock().expect("Could not lock mutex");
-
-                        match locked.get_mut(station) {
-                            Some(value) => {
-                                value.update(float);
-                            }
-                            None => {
-                                locked.insert(Box::from(station), StationValues::from(float));
-                            }
-                        }
                     });
+
+                let mut locked = map_clone.lock().expect("Could not lock mutex");
+
+                iter.for_each(|(station, float)| match locked.get_mut(station) {
+                    Some(value) => {
+                        value.update(float);
+                    }
+                    None => unsafe {
+                        locked.insert_unique_unchecked(
+                            Box::from(station),
+                            StationValues::from(float),
+                        );
+                    },
+                });
             });
         }
 
