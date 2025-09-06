@@ -45,8 +45,9 @@ impl StationMap {
     }
 
     fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
-        unsafe { std::str::from_utf8_unchecked(&self.bytes) }
-            .par_lines()
+        self.bytes
+            .par_split(|byte| byte == &b'\n')
+            .map(|line| unsafe { std::str::from_utf8_unchecked(line) })
             .filter_map(|line| line.split_once(';'))
             .filter_map(|(station, temp)| temp.parse::<f32>().ok().map(|parsed| (station, parsed)))
             .for_each(|(station, float)| {
