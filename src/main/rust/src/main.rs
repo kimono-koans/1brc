@@ -47,9 +47,18 @@ impl StationMap {
         })
     }
 
+    fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
+        let len = file.metadata()?.len();
+        let count = std::thread::available_parallelism()?.get();
+        let buf_capacity = len as usize / (count * 8);
+
+        Ok(buf_capacity)
+    }
+
     fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
-        let mut reader = BufReader::with_capacity(262_144_000, file);
+        let optimum_buffer_size = Self::optimum_buffer(&file)?;
+        let mut reader = BufReader::with_capacity(optimum_buffer_size, file);
 
         loop {
             // first, read lots of bytes into the buffer
