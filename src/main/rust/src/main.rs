@@ -2,6 +2,8 @@ use core::fmt;
 use std::cmp::Ordering;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -111,25 +113,29 @@ impl StationMap {
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
-        let locked = self.map.lock().expect("Could not lock mutex");
+        let out = std::io::stdout();
+        let out_locked = out.lock();
+        let mut output_buf = BufWriter::new(out_locked);
 
-        let last: usize = locked.len() - 1;
+        let map_locked = self.map.lock().expect("Could not lock mutex");
+        let last: usize = map_locked.len() - 1;
 
-        print!("{}", "{");
+        writeln!(&mut output_buf, "{{")?;
 
-        locked.iter().enumerate().for_each(|(idx, (key, value))| {
-            if idx == 0 {
-                return print!("\n\t{}={}\n", key, value);
-            }
+        map_locked
+            .iter()
+            .enumerate()
+            .try_for_each(|(idx, (key, value))| {
+                if idx == last {
+                    return writeln!(&mut output_buf, "\t{}={}", key, value);
+                }
 
-            if idx == last {
-                return print!("\t{}={}\n", key, value);
-            }
+                writeln!(&mut output_buf, "\t{}={},", key, value)
+            })?;
 
-            print!("\t{}={},\n", key, value)
-        });
+        writeln!(&mut output_buf, "}}")?;
 
-        println!("{}", "}");
+        output_buf.flush()?;
 
         Ok(())
     }
