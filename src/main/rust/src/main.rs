@@ -17,11 +17,15 @@ fn main() {
 }
 
 fn try_main() -> Result<(), Box<dyn Error>> {
-    let path = std::env::args().skip(1).next().unwrap_or_else(|| {
-        "/Users/rswinford/Programming/1brc.data/measurements-1000000000.txt".to_owned()
-    });
+    let home = std::env::home_dir().expect("Could not determine HOME env var");
 
-    let map = StationMap::new(&path)?;
+    let path = std::env::args()
+        .skip(1)
+        .next()
+        .map(|arg| PathBuf::from(arg))
+        .unwrap_or_else(|| home.join("Programming/1brc.data/measurements-1000000000.txt"));
+
+    let map = StationMap::new(path)?;
 
     map.read_bytes_into_map()?;
 
@@ -36,9 +40,7 @@ struct StationMap {
 }
 
 impl StationMap {
-    fn new(path: &str) -> Result<Self, Box<dyn Error>> {
-        let path = PathBuf::from(path);
-
+    fn new(path: PathBuf) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             path,
             map: Arc::new(Mutex::new(HashMap::with_capacity(1024))),
