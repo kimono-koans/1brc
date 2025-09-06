@@ -1,11 +1,12 @@
 use core::fmt;
 use std::cmp::Ordering;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::{error::Error, fs::File};
 
 use dashmap::DashMap as HashMap;
-use memmap2::Mmap;
-use memmap2::MmapOptions;
-use rayon::prelude::*;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -29,46 +30,62 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 }
 
 struct StationMap {
-    bytes: Mmap,
-    map: HashMap<Box<str>, StationValues>,
+    path: PathBuf,
+    map: Arc<HashMap<Box<str>, StationValues>>,
 }
 
 impl StationMap {
     fn new(path: &str) -> Result<Self, Box<dyn Error>> {
-        let file = File::open(path)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let path = PathBuf::from(path);
 
         Ok(Self {
-            bytes: mmap,
-            map: HashMap::with_capacity(1024),
+            path,
+            map: Arc::new(HashMap::with_capacity(1024)),
         })
     }
 
     fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
-        self.bytes
-            .par_split(|byte| byte == &b'\n')
-            .map(|line| unsafe { std::str::from_utf8_unchecked(line) })
-            .filter_map(|line| line.split_once(';'))
-            .filter_map(|(station, temp)| temp.parse::<f32>().ok().map(|parsed| (station, parsed)))
-            .for_each(|(station, float)| {
-                self.insert_into_map(station, float);
+        let file = File::open(&self.path)?;
+        let mut reader = BufReader::with_capacity(262_144_000, file);
+
+        loop {
+            // first, read lots of bytes into the buffer
+            let mut bytes_buffer = reader.fill_buf()?.to_vec();
+            reader.consume(bytes_buffer.len());
+
+            // now, keep reading to make sure we haven't stopped in the middle of a word.
+            // no need to add the bytes to the total buf_len, as these bytes are auto-"consumed()",
+            // and bytes_buffer will be extended from slice to accommodate the new bytes
+            reader.read_until(b'\n', &mut bytes_buffer)?;
+
+            // break when there is nothing left to read
+            if bytes_buffer.is_empty() {
+                break;
+            }
+
+            let map_clone = self.map.clone();
+
+            rayon::spawn(move || {
+                unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
+                    .split(|byte| byte == '\n')
+                    .filter_map(|line| line.split_once(';'))
+                    .filter_map(|(station, temp)| {
+                        temp.parse::<f32>().ok().map(|parsed| (station, parsed))
+                    })
+                    .for_each(|(station, float)| match map_clone.get_mut(station) {
+                        Some(mut value) => {
+                            value.update(float);
+                        }
+                        None => {
+                            map_clone.insert(Box::from(station), StationValues::from(float));
+                        }
+                    });
             });
+        }
 
         self.map.shrink_to_fit();
 
         Ok(())
-    }
-
-    fn insert_into_map(&self, station: &str, temp: f32) {
-        match self.map.get_mut(station) {
-            Some(mut value) => {
-                value.update(temp);
-            }
-            None => {
-                self.map
-                    .insert(Box::from(station), StationValues::from(temp));
-            }
-        }
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
@@ -76,20 +93,17 @@ impl StationMap {
 
         print!("{}", "{");
 
-        self.map
-            .into_iter()
-            .enumerate()
-            .for_each(|(idx, (station, value))| {
-                if idx == 0 {
-                    return print!("\n\t{}={}\n", station, value);
-                }
+        self.map.iter().enumerate().for_each(|(idx, entry)| {
+            if idx == 0 {
+                return print!("\n\t{}={}\n", entry.key(), entry.value());
+            }
 
-                if idx == last {
-                    return print!("\t{}={}\n", station, value);
-                }
+            if idx == last {
+                return print!("\t{}={}\n", entry.key(), entry.value());
+            }
 
-                print!("\t{}={},\n", station, value)
-            });
+            print!("\t{}={},\n", entry.key(), entry.value())
+        });
 
         println!("{}", "}");
 
@@ -97,6 +111,7 @@ impl StationMap {
     }
 }
 
+#[derive(Clone, Copy)]
 struct StationValues {
     min: f32,
     max: f32,
