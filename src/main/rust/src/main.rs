@@ -123,16 +123,16 @@ impl StationMap {
         sorted.par_sort_unstable_by_key(|(k, _v)| *k);
 
         {
-            writeln!(&mut output_buf, "{{")?;
+            write!(&mut output_buf, "{{")?;
 
             let opt_last = sorted.pop();
 
             sorted
                 .into_iter()
-                .try_for_each(|(key, value)| writeln!(&mut output_buf, "\t{}={},", key, value))?;
+                .try_for_each(|(key, value)| write!(&mut output_buf, "{}={}, ", key, value))?;
 
             if let Some(last) = opt_last {
-                writeln!(&mut output_buf, "{}={}", last.0, last.1)?;
+                write!(&mut output_buf, "{}={}", last.0, last.1)?;
             }
 
             writeln!(&mut output_buf, "}}")?;
