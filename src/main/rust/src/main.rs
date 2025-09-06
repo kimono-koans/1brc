@@ -67,24 +67,25 @@ impl StationMap {
             let map_clone = self.map.clone();
 
             rayon::spawn(move || {
-                let iter = std::str::from_utf8(&bytes_buffer)
+                std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
                     .split(|byte| byte == '\n')
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
+                    })
+                    .for_each(|(station, float)| {
+                        let mut locked = map_clone.lock().expect("Could not lock mutex");
+
+                        match locked.get_mut(station) {
+                            Some(value) => {
+                                value.update(float);
+                            }
+                            None => {
+                                locked.insert(Box::from(station), StationValues::from(float));
+                            }
+                        }
                     });
-
-                let mut locked = map_clone.lock().expect("Could not lock mutex");
-
-                iter.for_each(|(station, float)| match locked.get_mut(station) {
-                    Some(value) => {
-                        value.update(float);
-                    }
-                    None => {
-                        locked.insert(Box::from(station), StationValues::from(float));
-                    }
-                });
             });
         }
 
