@@ -88,7 +88,7 @@ impl StationMap {
             rayon::spawn(move || {
                 let iter = std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
-                    .split(|byte| byte == '\n')
+                    .lines()
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
