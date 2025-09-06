@@ -117,29 +117,28 @@ impl StationMap {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
-
         let map_locked = self.map.lock().expect("Could not lock mutex");
-        let last: usize = map_locked.len() - 1;
 
         let mut sorted: Vec<_> = map_locked.iter().collect();
         sorted.par_sort_unstable_by_key(|(k, _v)| *k);
 
-        writeln!(&mut output_buf, "{{")?;
+        {
+            writeln!(&mut output_buf, "{{")?;
 
-        sorted
-            .iter()
-            .enumerate()
-            .try_for_each(|(idx, (key, value))| {
-                if idx == last {
-                    return writeln!(&mut output_buf, "\t{}={}", key, value);
-                }
+            let opt_last = sorted.pop();
 
-                writeln!(&mut output_buf, "\t{}={},", key, value)
-            })?;
+            sorted
+                .into_iter()
+                .try_for_each(|(key, value)| writeln!(&mut output_buf, "\t{}={},", key, value))?;
 
-        writeln!(&mut output_buf, "}}")?;
+            if let Some(last) = opt_last {
+                writeln!(&mut output_buf, "\t{}={}", last.0, last.1)?;
+            }
 
-        output_buf.flush()?;
+            writeln!(&mut output_buf, "}}")?;
+
+            output_buf.flush()?;
+        }
 
         Ok(())
     }
