@@ -29,7 +29,10 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let map = StationMap::new(path)?;
 
     rayon::scope(|scope| {
-        map.read_bytes_into_map(scope).unwrap();
+        map.read_bytes_into_map(scope).unwrap_or_else(|err| {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        });
     });
 
     map.print_map()?;
@@ -55,7 +58,7 @@ impl StationMap {
     fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
         let len = file.metadata()?.len();
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 512);
+        let buf_capacity = len as usize / (count * 128);
 
         Ok(buf_capacity)
     }
