@@ -55,7 +55,7 @@ impl StationMap {
     fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
         let len = file.metadata()?.len();
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 1024);
+        let buf_capacity = len as usize / (count * 512);
 
         Ok(buf_capacity)
     }
