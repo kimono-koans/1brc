@@ -60,7 +60,7 @@ impl StationMap {
         Ok(buf_capacity)
     }
 
-    fn read_bytes_into_map(&self, scope: &Scope<'_>) -> Result<(), Box<dyn Error>> {
+    fn read_bytes_into_map<'a>(&'a self, scope: &Scope<'a>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let optimum_buffer_size = Self::optimum_buffer(&file)?;
         let mut reader: BufReader<File> = BufReader::with_capacity(optimum_buffer_size, file);
@@ -80,8 +80,6 @@ impl StationMap {
                 break;
             }
 
-            let map_clone = self.map.clone();
-
             scope.spawn(move |_| {
                 std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
@@ -90,13 +88,14 @@ impl StationMap {
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
                     })
-                    .for_each(|(station, float)| match map_clone.get_mut(station) {
+                    .for_each(|(station, float)| match self.map.get_mut(station) {
                         Some(mut value) => {
                             value.update(float);
                         }
                         None => {
-                            let _ =
-                                map_clone.insert(Box::from(station), StationValues::from(float));
+                            let _ = self
+                                .map
+                                .insert(Box::from(station), StationValues::from(float));
                         }
                     });
             });
