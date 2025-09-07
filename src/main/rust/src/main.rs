@@ -4,11 +4,10 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::{error::Error, fs::File};
 
-use hashbrown::HashMap;
+use dashmap::DashMap as HashMap;
+use rayon::Scope;
 use rayon::prelude::*;
 
 fn main() {
@@ -29,7 +28,9 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
     let map = StationMap::new(path)?;
 
-    map.read_bytes_into_map()?;
+    rayon::scope(|scope| {
+        map.read_bytes_into_map(scope).unwrap();
+    });
 
     map.print_map()?;
 
@@ -38,7 +39,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
+    map: HashMap<Box<str>, StationValues>,
 }
 
 impl StationMap {
@@ -47,22 +48,19 @@ impl StationMap {
 
         Ok(Self {
             path,
-            map: Arc::new(Mutex::new(HashMap::with_capacity(
-                APPROXIMATE_TOTAL_CAPACITY,
-            ))),
+            map: HashMap::with_capacity(APPROXIMATE_TOTAL_CAPACITY),
         })
     }
 
     fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
         let len = file.metadata()?.len();
         let count = std::thread::available_parallelism()?.get();
-        static REDUCTION_FACTOR: usize = 512;
-        let buf_capacity = len as usize / (count * REDUCTION_FACTOR);
+        let buf_capacity = len as usize / (count * 1024);
 
         Ok(buf_capacity)
     }
 
-    fn read_bytes_into_map(&self) -> Result<(), Box<dyn Error>> {
+    fn read_bytes_into_map(&self, scope: &Scope<'_>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let optimum_buffer_size = Self::optimum_buffer(&file)?;
         let mut reader: BufReader<File> = BufReader::with_capacity(optimum_buffer_size, file);
@@ -84,28 +82,23 @@ impl StationMap {
 
             let map_clone = self.map.clone();
 
-            rayon::spawn(move || {
-                let iter = std::str::from_utf8(&bytes_buffer)
+            scope.spawn(move |_| {
+                std::str::from_utf8(&bytes_buffer)
                     .expect("Input bytes are not valid UTF8")
                     .lines()
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
+                    })
+                    .for_each(|(station, float)| match map_clone.get_mut(station) {
+                        Some(mut value) => {
+                            value.update(float);
+                        }
+                        None => {
+                            let _ =
+                                map_clone.insert(Box::from(station), StationValues::from(float));
+                        }
                     });
-
-                let mut locked = map_clone.lock().expect("Could not lock mutex");
-
-                iter.for_each(|(station, float)| match locked.get_mut(station) {
-                    Some(value) => {
-                        value.update(float);
-                    }
-                    None => unsafe {
-                        locked.insert_unique_unchecked(
-                            Box::from(station),
-                            StationValues::from(float),
-                        );
-                    },
-                });
             });
         }
 
@@ -116,10 +109,9 @@ impl StationMap {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
-        let map_locked = self.map.lock().expect("Could not lock mutex");
 
-        let mut sorted: Vec<_> = map_locked.iter().collect();
-        sorted.par_sort_unstable_by_key(|(k, _v)| *k);
+        let mut sorted: Vec<_> = self.map.into_iter().collect();
+        sorted.par_sort_unstable_by_key(|(k, _v)| k.clone());
 
         {
             write!(&mut output_buf, "{{")?;

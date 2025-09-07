@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-hashbrown = { version = "0.16.0" }
+dashmap = { version = "6.1.0" }
 rayon = { version = "1.11.0" }
