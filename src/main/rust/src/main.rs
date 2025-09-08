@@ -64,11 +64,10 @@ impl StationMap {
 
         loop {
             let mut end_offset = start_offset + BUFFER_SIZE;
+
             if end_offset.gt(&len) {
                 end_offset = len;
-            }
-
-            if end_offset.lt(&len) {
+            } else if end_offset.lt(&len) {
                 if let Some(pos) = mmap[end_offset as usize..]
                     .iter()
                     .position(|byte| byte == &b'\n')
