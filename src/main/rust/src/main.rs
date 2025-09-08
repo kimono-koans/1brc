@@ -69,15 +69,16 @@ impl StationMap {
 
             let mut bytes_buffer = mmap[start_offset as usize..end_offset as usize].to_vec();
 
-            let opt_next_newline_pos = mmap[end_offset as usize..]
-                .iter()
-                .position(|byte| byte == &b'\n');
-
-            if let Some(pos) = opt_next_newline_pos {
-                bytes_buffer.extend_from_slice(
-                    &mmap[end_offset as usize..end_offset as usize + pos as usize],
-                );
-                end_offset += pos as u64;
+            if end_offset < len {
+                if let Some(pos) = mmap[end_offset as usize..]
+                    .iter()
+                    .position(|byte| byte == &b'\n')
+                {
+                    bytes_buffer.extend_from_slice(
+                        &mmap[end_offset as usize..end_offset as usize + pos as usize],
+                    );
+                    end_offset += pos as u64;
+                }
             }
 
             if bytes_buffer.is_empty() {
