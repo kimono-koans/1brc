@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-memmap2 = { version = "0.9.8", default-features = false }
-dashmap = { version = "6.1.0", default-features = false, features = [
+hashbrown = { version = "0.16.0", default-features = false, features = [
     "rayon",
-    "inline",
+    "inline-more",
+    "default-hasher",
 ] }
+memmap2 = { version = "0.9.8", default-features = false }
 rayon = { version = "1.11.0", default-features = false }

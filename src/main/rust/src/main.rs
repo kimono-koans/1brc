@@ -2,12 +2,13 @@ use core::fmt;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread::Scope;
 use std::{error::Error, fs::File};
 
-use dashmap::DashMap as HashMap;
+use hashbrown::HashMap;
 use memmap2::MmapOptions;
-use rayon::Scope;
-use rayon::prelude::*;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -25,23 +26,25 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .map(|arg| PathBuf::from(arg))
         .unwrap_or_else(|| home.join("Programming/1brc.data/measurements-1000000000.txt"));
 
-    let map = StationMap::new(path)?;
+    let mut station_map = StationMap::new(path)?;
 
-    rayon::scope(|scope| {
-        map.read_bytes_into_map(scope).unwrap_or_else(|err| {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        });
+    std::thread::scope(|scope| {
+        station_map
+            .read_bytes_into_map(scope)
+            .unwrap_or_else(|err| {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            });
     });
 
-    map.print_map()?;
+    station_map.print_map()?;
 
     Ok(())
 }
 
 struct StationMap {
     path: PathBuf,
-    map: HashMap<Box<str>, StationValues>,
+    map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
 }
 
 impl StationMap {
@@ -50,17 +53,21 @@ impl StationMap {
 
         Ok(Self {
             path,
-            map: HashMap::with_capacity(APPROXIMATE_TOTAL_CAPACITY),
+            map: Arc::new(Mutex::new(HashMap::with_capacity(
+                APPROXIMATE_TOTAL_CAPACITY,
+            ))),
         })
     }
 
-    fn read_bytes_into_map<'a>(&'a self, scope: &Scope<'a>) -> Result<(), Box<dyn Error>> {
+    fn read_bytes_into_map<'a>(&mut self, scope: &'a Scope<'a, '_>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let len = file.metadata()?.len();
-        static BUFFER_SIZE: u64 = 16_777_216u64;
+        static BUFFER_SIZE: u64 = 67108864u64;
         let mut start_offset = 0u64;
 
         let mmap = unsafe { MmapOptions::new().populate().map(&file)? };
+
+        let mut handles = Vec::new();
 
         loop {
             let mut end_offset = start_offset + BUFFER_SIZE;
@@ -82,27 +89,77 @@ impl StationMap {
                 break;
             }
 
-            scope.spawn(move |_| {
+            let handle = scope.spawn(move || {
+                let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
+
                 unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
                     .lines()
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
                     })
-                    .for_each(|(station, float)| match self.map.get_mut(station) {
-                        Some(mut value) => {
-                            value.update(float);
-                        }
-                        None => {
-                            let _ = self
-                                .map
-                                .insert(Box::from(station), StationValues::from(float));
-                        }
-                    });
+                    .for_each(
+                        |(station_name, temp_float)| match local_map.get_mut(station_name) {
+                            Some(value) => {
+                                value.update(temp_float);
+                            }
+                            None => {
+                                let _ = local_map.insert(
+                                    Box::from(station_name),
+                                    StationValues::from(temp_float),
+                                );
+                            }
+                        },
+                    );
+
+                local_map
             });
+
+            handles.push(handle);
+
+            let finished: Vec<_> = handles
+                .extract_if(.., |item| item.is_finished())
+                .map(|item| item.join().ok())
+                .flatten()
+                .flatten()
+                .collect();
+
+            if !finished.is_empty() {
+                let map_clone = self.map.clone();
+
+                scope.spawn(move || {
+                    let mut locked = map_clone.lock().unwrap();
+
+                    finished
+                        .into_iter()
+                        .for_each(|(name, values)| match locked.get_mut(&name) {
+                            Some(value) => {
+                                value.merge(&values);
+                            }
+                            None => unsafe {
+                                locked.insert_unique_unchecked(name, values);
+                            },
+                        });
+                });
+            }
 
             start_offset = end_offset;
         }
+
+        let mut locked = self.map.lock().unwrap();
+
+        handles
+            .into_iter()
+            .filter_map(|item| item.join().ok())
+            .flatten()
+            .for_each(|(name, values)| match locked.get_mut(&name) {
+                Some(value) => {
+                    value.merge(&values);
+                }
+                None => unsafe {
+                    locked.insert_unique_unchecked(name, values);
+                },
+            });
 
         Ok(())
     }
@@ -111,9 +168,10 @@ impl StationMap {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
+        let locked = self.map.lock().unwrap();
 
-        let mut sorted: Vec<_> = self.map.into_iter().collect();
-        sorted.par_sort_unstable_by_key(|(k, _v)| k.clone());
+        let mut sorted: Vec<_> = locked.iter().collect();
+        sorted.sort_unstable_by_key(|(k, _v)| *k);
 
         {
             write!(&mut output_buf, "{{")?;
@@ -137,7 +195,7 @@ impl StationMap {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct StationValues {
     min: f32,
     max: f32,
@@ -168,6 +226,19 @@ impl StationValues {
 
         self.sum += new_value;
         self.count += 1;
+    }
+
+    fn merge(&mut self, other: &Self) {
+        if self.max.lt(&other.max) {
+            self.max = other.max;
+        }
+
+        if self.min.gt(&other.min) {
+            self.min = other.min;
+        }
+
+        self.sum += other.sum;
+        self.count += other.count;
     }
 
     fn mean(&self) -> f32 {
