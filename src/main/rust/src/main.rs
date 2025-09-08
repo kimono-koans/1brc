@@ -13,6 +13,7 @@ use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
 use rayon::Scope;
+use rayon::prelude::ParallelSliceMut;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -188,11 +189,11 @@ impl StationMap {
         }
 
         let mut queue_locked = queue.lock().unwrap();
-        let ready = std::mem::take(&mut *queue_locked);
+        let taken = std::mem::take(&mut *queue_locked);
 
         let mut map_locked = self.map.lock().unwrap();
 
-        ready
+        taken
             .into_iter()
             .flatten()
             .for_each(|(k, v)| match map_locked.get_mut(&k) {
@@ -211,10 +212,11 @@ impl StationMap {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
-        let locked = self.map.lock().unwrap();
+        let mut locked = self.map.lock().unwrap();
+        let taken = std::mem::take(&mut *locked);
 
-        let mut sorted: Vec<_> = locked.iter().collect();
-        sorted.sort_unstable_by_key(|(k, _v)| *k);
+        let mut sorted: Vec<_> = taken.into_iter().collect();
+        sorted.par_sort_unstable_by_key(|(k, _v)| k.clone());
 
         {
             write!(&mut output_buf, "{{")?;
