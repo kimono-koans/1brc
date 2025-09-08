@@ -1,12 +1,11 @@
 use core::fmt;
-use std::io::BufRead;
-use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
 use std::{error::Error, fs::File};
 
 use dashmap::DashMap as HashMap;
+use memmap2::MmapOptions;
 use rayon::Scope;
 use rayon::prelude::*;
 
@@ -55,37 +54,46 @@ impl StationMap {
         })
     }
 
-    fn optimum_buffer(file: &File) -> Result<usize, Box<dyn Error>> {
-        let len = file.metadata()?.len();
+    fn optimum_buffer(len: u64) -> Result<usize, Box<dyn Error>> {
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 128);
+        let buf_capacity = len as usize / (count * 512);
 
         Ok(buf_capacity)
     }
 
     fn read_bytes_into_map<'a>(&'a self, scope: &Scope<'a>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
-        let optimum_buffer_size = Self::optimum_buffer(&file)?;
-        let mut reader: BufReader<File> = BufReader::with_capacity(optimum_buffer_size, file);
+        let len = file.metadata()?.len();
+        let optimum_buffer_size = Self::optimum_buffer(len)? as u64;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        let mut offset = 0u64;
 
         loop {
-            // first, read lots of bytes into the buffer
-            let mut bytes_buffer = reader.fill_buf()?.to_vec();
-            reader.consume(bytes_buffer.len());
+            let mut offset_plus = offset + optimum_buffer_size;
+            if offset_plus.gt(&len) {
+                offset_plus = len;
+            }
 
-            // now, keep reading to make sure we haven't stopped in the middle of a word.
-            // no need to add the bytes to the total buf_len, as these bytes are auto-"consumed()",
-            // and bytes_buffer will be extended from slice to accommodate the new bytes
-            reader.read_until(b'\n', &mut bytes_buffer)?;
+            let mut bytes_buffer = mmap[offset as usize..offset_plus as usize].to_vec();
 
-            // break when there is nothing left to read
+            offset = offset_plus;
+
+            let opt_next_newline_pos = mmap[offset as usize..]
+                .iter()
+                .position(|byte| byte == &b'\n');
+
+            if let Some(pos) = opt_next_newline_pos {
+                bytes_buffer
+                    .extend_from_slice(&mmap[offset as usize..offset as usize + pos as usize]);
+                offset += pos as u64;
+            }
+
             if bytes_buffer.is_empty() {
                 break;
             }
 
             scope.spawn(move |_| {
-                std::str::from_utf8(&bytes_buffer)
-                    .expect("Input bytes are not valid UTF8")
+                unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
                     .lines()
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
