@@ -4,11 +4,15 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::thread::Scope;
+use std::sync::TryLockError;
+use std::thread::sleep;
+use std::time::Duration;
 use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
 use memmap2::MmapOptions;
+use rayon::Scope;
+use rayon::prelude::*;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -28,7 +32,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
     let mut station_map = StationMap::new(path)?;
 
-    std::thread::scope(|scope| {
+    rayon::scope(|scope| {
         station_map
             .read_bytes_into_map(scope)
             .unwrap_or_else(|err| {
@@ -59,7 +63,7 @@ impl StationMap {
         })
     }
 
-    fn read_bytes_into_map<'a>(&mut self, scope: &'a Scope<'a, '_>) -> Result<(), Box<dyn Error>> {
+    fn read_bytes_into_map<'a>(&mut self, scope: &Scope) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let len = file.metadata()?.len();
         static BUFFER_SIZE: u64 = 67108864u64;
@@ -67,7 +71,8 @@ impl StationMap {
 
         let mmap = unsafe { MmapOptions::new().populate().map(&file)? };
 
-        let mut handles = Vec::new();
+        let queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>> =
+            Arc::new(Mutex::new(Vec::new()));
 
         loop {
             let mut end_offset = start_offset + BUFFER_SIZE;
@@ -89,11 +94,13 @@ impl StationMap {
                 break;
             }
 
-            let handle = scope.spawn(move || {
+            let queue_clone = queue.clone();
+
+            scope.spawn(move |_| {
                 let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
 
                 unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
-                    .lines()
+                    .split("\n")
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
@@ -112,52 +119,101 @@ impl StationMap {
                         },
                     );
 
-                local_map
+                loop {
+                    let mut lock_failures = 0u64;
+
+                    match queue_clone.try_lock() {
+                        Ok(mut locked) => {
+                            locked.push(local_map);
+                            break;
+                        }
+                        Err(err) => {
+                            lock_failures += 1;
+
+                            match err {
+                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                                TryLockError::WouldBlock => {
+                                    sleep(Duration::from_millis(lock_failures));
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
             });
 
-            handles.push(handle);
+            let queue_clone = queue.clone();
+            let map_clone = self.map.clone();
 
-            let finished: Vec<_> = handles
-                .extract_if(.., |item| item.is_finished())
-                .map(|item| item.join().ok())
-                .flatten()
-                .flatten()
-                .collect();
+            scope.spawn(move |_| {
+                loop {
+                    let mut lock_failures = 0u64;
 
-            if !finished.is_empty() {
-                let map_clone = self.map.clone();
-
-                scope.spawn(move || {
-                    let mut locked = map_clone.lock().unwrap();
-
-                    finished
-                        .into_iter()
-                        .for_each(|(name, values)| match locked.get_mut(&name) {
-                            Some(value) => {
-                                value.merge(&values);
+                    let ready = match queue_clone.try_lock() {
+                        Ok(mut queue_locked) => {
+                            if queue_locked.len() <= 128 {
+                                break;
                             }
-                            None => unsafe {
-                                locked.insert_unique_unchecked(name, values);
-                            },
-                        });
-                });
-            }
+                            std::mem::take(&mut *queue_locked)
+                        }
+                        Err(err) => {
+                            lock_failures += 1;
+
+                            match err {
+                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                                TryLockError::WouldBlock => {
+                                    sleep(Duration::from_millis(lock_failures));
+                                    continue;
+                                }
+                            }
+                        }
+                    };
+
+                    match map_clone.try_lock() {
+                        Ok(mut map_locked) => {
+                            ready.into_iter().flatten().for_each(|(k, v)| {
+                                match map_locked.get_mut(&k) {
+                                    Some(value) => {
+                                        value.merge(&v);
+                                    }
+                                    None => unsafe {
+                                        map_locked.insert_unique_unchecked(k.clone(), v);
+                                    },
+                                }
+                            });
+
+                            break;
+                        }
+                        Err(err) => {
+                            lock_failures += 1;
+
+                            match err {
+                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                                TryLockError::WouldBlock => {
+                                    sleep(Duration::from_millis(lock_failures));
+                                    continue;
+                                }
+                            }
+                        }
+                    };
+                }
+            });
 
             start_offset = end_offset;
         }
 
-        let mut locked = self.map.lock().unwrap();
+        let queue_locked = queue.lock().unwrap();
+        let mut map_locked = self.map.lock().unwrap();
 
-        handles
-            .into_iter()
-            .filter_map(|item| item.join().ok())
+        queue_locked
+            .iter()
             .flatten()
-            .for_each(|(name, values)| match locked.get_mut(&name) {
+            .for_each(|(k, v)| match map_locked.get_mut(k) {
                 Some(value) => {
-                    value.merge(&values);
+                    value.merge(&v);
                 }
                 None => unsafe {
-                    locked.insert_unique_unchecked(name, values);
+                    map_locked.insert_unique_unchecked(k.clone(), *v);
                 },
             });
 
@@ -171,7 +227,7 @@ impl StationMap {
         let locked = self.map.lock().unwrap();
 
         let mut sorted: Vec<_> = locked.iter().collect();
-        sorted.sort_unstable_by_key(|(k, _v)| *k);
+        sorted.par_sort_unstable_by_key(|(k, _v)| *k);
 
         {
             write!(&mut output_buf, "{{")?;
