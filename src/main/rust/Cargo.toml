@@ -9,5 +9,4 @@ hashbrown = { version = "0.16.0", default-features = false, features = [
     "inline-more",
     "default-hasher",
 ] }
-memmap2 = { version = "0.9.8", default-features = false }
 rayon = { version = "1.11.0", default-features = false }

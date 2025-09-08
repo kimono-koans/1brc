@@ -1,4 +1,6 @@
 use core::fmt;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::PathBuf;
@@ -10,7 +12,6 @@ use std::time::Duration;
 use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
-use memmap2::MmapOptions;
 use rayon::Scope;
 use rayon::prelude::*;
 
@@ -65,30 +66,17 @@ impl StationMap {
 
     fn read_bytes_into_map<'a>(&mut self, scope: &Scope) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
-        let len = file.metadata()?.len();
-        static BUFFER_SIZE: u64 = 67108864u64;
-        let mut start_offset = 0u64;
+        static BUFFER_SIZE: usize = 2_097_152;
 
-        let mmap = unsafe { MmapOptions::new().populate().map(&file)? };
+        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
 
         let queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>> =
             Arc::new(Mutex::new(Vec::new()));
 
         loop {
-            let mut end_offset = start_offset + BUFFER_SIZE;
-
-            if end_offset.gt(&len) {
-                end_offset = len;
-            } else if end_offset.lt(&len) {
-                if let Some(pos) = mmap[end_offset as usize..]
-                    .iter()
-                    .position(|byte| byte == &b'\n')
-                {
-                    end_offset += pos as u64;
-                }
-            }
-
-            let bytes_buffer = mmap[start_offset as usize..end_offset as usize].to_vec();
+            let mut bytes_buffer: Vec<u8> = reader.fill_buf()?.to_vec();
+            reader.consume(bytes_buffer.len());
+            reader.read_until(b'\n', &mut bytes_buffer)?;
 
             if bytes_buffer.is_empty() {
                 break;
@@ -100,7 +88,7 @@ impl StationMap {
                 let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
 
                 unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
-                    .split("\n")
+                    .lines()
                     .filter_map(|line| line.split_once(';'))
                     .filter_map(|(station, temp)| {
                         temp.parse::<f32>().ok().map(|parsed| (station, parsed))
@@ -151,7 +139,7 @@ impl StationMap {
 
                     let ready = match queue_clone.try_lock() {
                         Ok(mut queue_locked) => {
-                            if queue_locked.len() <= 128 {
+                            if queue_locked.len() <= 512 {
                                 break;
                             }
                             std::mem::take(&mut *queue_locked)
@@ -198,8 +186,6 @@ impl StationMap {
                     };
                 }
             });
-
-            start_offset = end_offset;
         }
 
         let queue_locked = queue.lock().unwrap();

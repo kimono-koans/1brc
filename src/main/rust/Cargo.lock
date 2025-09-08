@@ -7,7 +7,6 @@ name = "brc"
 version = "0.1.0"
 dependencies = [
  "hashbrown",
- "memmap2",
  "rayon",
 ]
 
@@ -56,21 +55,6 @@ checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 dependencies = [
  "foldhash",
  "rayon",
-]
-
-[[package]]
-name = "libc"
-version = "0.2.175"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a82ae493e598baaea5209805c49bbf2ea7de956d50d7da0da1164f9c6d28543"
-
-[[package]]
-name = "memmap2"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843a98750cd611cc2965a8213b53b43e715f13c37a9e096c6408e69990961db7"
-dependencies = [
- "libc",
 ]
 
 [[package]]
