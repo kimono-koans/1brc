@@ -103,12 +103,12 @@ impl StationMap {
                             Some(value) => {
                                 value.update(temp_float);
                             }
-                            None => {
-                                let _ = local_map.insert(
+                            None => unsafe {
+                                local_map.insert_unique_unchecked(
                                     Box::from(station_name),
                                     StationValues::from(temp_float),
                                 );
-                            }
+                            },
                         },
                     );
 
