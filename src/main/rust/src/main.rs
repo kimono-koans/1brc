@@ -57,9 +57,10 @@ impl StationMap {
     fn read_bytes_into_map<'a>(&'a self, scope: &Scope<'a>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let len = file.metadata()?.len();
-        static BUFFER_SIZE: u64 = 2097152u64;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+        static BUFFER_SIZE: u64 = 16_777_216u64;
         let mut start_offset = 0u64;
+
+        let mmap = unsafe { MmapOptions::new().populate().map(&file)? };
 
         loop {
             let mut end_offset = start_offset + BUFFER_SIZE;
@@ -67,19 +68,16 @@ impl StationMap {
                 end_offset = len;
             }
 
-            let mut bytes_buffer = mmap[start_offset as usize..end_offset as usize].to_vec();
-
-            if end_offset < len {
+            if end_offset.lt(&len) {
                 if let Some(pos) = mmap[end_offset as usize..]
                     .iter()
                     .position(|byte| byte == &b'\n')
                 {
-                    bytes_buffer.extend_from_slice(
-                        &mmap[end_offset as usize..end_offset as usize + pos as usize],
-                    );
                     end_offset += pos as u64;
                 }
             }
+
+            let bytes_buffer = mmap[start_offset as usize..end_offset as usize].to_vec();
 
             if bytes_buffer.is_empty() {
                 break;
