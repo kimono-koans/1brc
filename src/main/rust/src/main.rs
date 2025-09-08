@@ -163,12 +163,7 @@ impl StationMap {
 
             loop {
                 let ready = match queue_clone.try_lock() {
-                    Ok(mut queue_locked) => {
-                        if queue_locked.len() <= 128 {
-                            break;
-                        }
-                        std::mem::take(&mut *queue_locked)
-                    }
+                    Ok(mut queue_locked) => std::mem::take(&mut *queue_locked),
                     Err(err) => {
                         lock_failures += 1;
 
