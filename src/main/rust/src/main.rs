@@ -102,8 +102,6 @@ impl StationMap {
                                 .insert(Box::from(station), StationValues::from(float));
                         }
                     });
-
-                bytes_buffer.clear();
             });
 
             start_offset = end_offset;
