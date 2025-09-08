@@ -13,7 +13,6 @@ use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
 use rayon::Scope;
-use rayon::prelude::*;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -139,7 +138,7 @@ impl StationMap {
 
                     let ready = match queue_clone.try_lock() {
                         Ok(mut queue_locked) => {
-                            if queue_locked.len() <= 512 {
+                            if queue_locked.len() <= 128 {
                                 break;
                             }
                             std::mem::take(&mut *queue_locked)
@@ -165,7 +164,7 @@ impl StationMap {
                                         value.merge(&v);
                                     }
                                     None => unsafe {
-                                        map_locked.insert_unique_unchecked(k.clone(), v);
+                                        map_locked.insert_unique_unchecked(k, v);
                                     },
                                 }
                             });
@@ -188,18 +187,20 @@ impl StationMap {
             });
         }
 
-        let queue_locked = queue.lock().unwrap();
+        let mut queue_locked = queue.lock().unwrap();
+        let ready = std::mem::take(&mut *queue_locked);
+
         let mut map_locked = self.map.lock().unwrap();
 
-        queue_locked
-            .iter()
+        ready
+            .into_iter()
             .flatten()
-            .for_each(|(k, v)| match map_locked.get_mut(k) {
+            .for_each(|(k, v)| match map_locked.get_mut(&k) {
                 Some(value) => {
                     value.merge(&v);
                 }
                 None => unsafe {
-                    map_locked.insert_unique_unchecked(k.clone(), *v);
+                    map_locked.insert_unique_unchecked(k, v);
                 },
             });
 
@@ -213,7 +214,7 @@ impl StationMap {
         let locked = self.map.lock().unwrap();
 
         let mut sorted: Vec<_> = locked.iter().collect();
-        sorted.par_sort_unstable_by_key(|(k, _v)| *k);
+        sorted.sort_unstable_by_key(|(k, _v)| *k);
 
         {
             write!(&mut output_buf, "{{")?;
