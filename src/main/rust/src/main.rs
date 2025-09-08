@@ -50,6 +50,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 struct StationMap {
     path: PathBuf,
     map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
+    queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>>,
 }
 
 impl StationMap {
@@ -61,6 +62,7 @@ impl StationMap {
             map: Arc::new(Mutex::new(HashMap::with_capacity(
                 APPROXIMATE_TOTAL_CAPACITY,
             ))),
+            queue: Arc::new(Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY))),
         })
     }
 
@@ -69,9 +71,6 @@ impl StationMap {
         static BUFFER_SIZE: usize = 2_097_152;
 
         let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
-
-        let queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>> =
-            Arc::new(Mutex::new(Vec::new()));
 
         loop {
             let mut bytes_buffer: Vec<u8> = reader.fill_buf()?.to_vec();
@@ -82,113 +81,11 @@ impl StationMap {
                 break;
             }
 
-            let queue_clone = queue.clone();
-
-            scope.spawn(move |_| {
-                let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
-
-                unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
-                    .lines()
-                    .filter_map(|line| line.split_once(';'))
-                    .filter_map(|(station, temp)| {
-                        temp.parse::<f32>().ok().map(|parsed| (station, parsed))
-                    })
-                    .for_each(
-                        |(station_name, temp_float)| match local_map.get_mut(station_name) {
-                            Some(value) => {
-                                value.update(temp_float);
-                            }
-                            None => unsafe {
-                                local_map.insert_unique_unchecked(
-                                    Box::from(station_name),
-                                    StationValues::from(temp_float),
-                                );
-                            },
-                        },
-                    );
-
-                loop {
-                    let mut lock_failures = 0u64;
-
-                    match queue_clone.try_lock() {
-                        Ok(mut locked) => {
-                            locked.push(local_map);
-                            break;
-                        }
-                        Err(err) => {
-                            lock_failures += 1;
-
-                            match err {
-                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
-                                TryLockError::WouldBlock => {
-                                    sleep(Duration::from_millis(lock_failures));
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-
-            let queue_clone = queue.clone();
-            let map_clone = self.map.clone();
-
-            scope.spawn(move |_| {
-                loop {
-                    let mut lock_failures = 0u64;
-
-                    let ready = match queue_clone.try_lock() {
-                        Ok(mut queue_locked) => {
-                            if queue_locked.len() <= 128 {
-                                break;
-                            }
-                            std::mem::take(&mut *queue_locked)
-                        }
-                        Err(err) => {
-                            lock_failures += 1;
-
-                            match err {
-                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
-                                TryLockError::WouldBlock => {
-                                    sleep(Duration::from_millis(lock_failures));
-                                    continue;
-                                }
-                            }
-                        }
-                    };
-
-                    match map_clone.try_lock() {
-                        Ok(mut map_locked) => {
-                            ready.into_iter().flatten().for_each(|(k, v)| {
-                                match map_locked.get_mut(&k) {
-                                    Some(value) => {
-                                        value.merge(&v);
-                                    }
-                                    None => unsafe {
-                                        map_locked.insert_unique_unchecked(k, v);
-                                    },
-                                }
-                            });
-
-                            break;
-                        }
-                        Err(err) => {
-                            lock_failures += 1;
-
-                            match err {
-                                TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
-                                TryLockError::WouldBlock => {
-                                    sleep(Duration::from_millis(lock_failures));
-                                    continue;
-                                }
-                            }
-                        }
-                    };
-                }
-            });
+            self.spawn_bytes_worker(bytes_buffer, scope);
+            self.spawn_queue_reader(scope);
         }
 
-        let mut queue_locked = queue.lock().unwrap();
+        let mut queue_locked = self.queue.lock().unwrap();
         let taken = std::mem::take(&mut *queue_locked);
 
         let mut map_locked = self.map.lock().unwrap();
@@ -206,6 +103,114 @@ impl StationMap {
             });
 
         Ok(())
+    }
+
+    fn spawn_bytes_worker(&self, bytes_buffer: Vec<u8>, scope: &Scope) {
+        let queue_clone = self.queue.clone();
+
+        scope.spawn(move |_| {
+            let mut lock_failures = 0u64;
+            let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
+
+            unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
+                .lines()
+                .filter_map(|line| line.split_once(';'))
+                .filter_map(|(station, temp)| {
+                    temp.parse::<f32>().ok().map(|parsed| (station, parsed))
+                })
+                .for_each(
+                    |(station_name, temp_float)| match local_map.get_mut(station_name) {
+                        Some(value) => {
+                            value.update(temp_float);
+                        }
+                        None => unsafe {
+                            local_map.insert_unique_unchecked(
+                                Box::from(station_name),
+                                StationValues::from(temp_float),
+                            );
+                        },
+                    },
+                );
+
+            loop {
+                match queue_clone.try_lock() {
+                    Ok(mut locked) => {
+                        locked.push(local_map);
+                        break;
+                    }
+                    Err(err) => {
+                        lock_failures += 1;
+
+                        match err {
+                            TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                            TryLockError::WouldBlock => {
+                                sleep(Duration::from_millis(lock_failures));
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn spawn_queue_reader(&self, scope: &Scope) {
+        let queue_clone = self.queue.clone();
+        let map_clone = self.map.clone();
+
+        scope.spawn(move |_| {
+            let mut lock_failures = 0u64;
+
+            loop {
+                let ready = match queue_clone.try_lock() {
+                    Ok(mut queue_locked) => {
+                        if queue_locked.len() <= 128 {
+                            break;
+                        }
+                        std::mem::take(&mut *queue_locked)
+                    }
+                    Err(err) => {
+                        lock_failures += 1;
+
+                        match err {
+                            TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                            TryLockError::WouldBlock => {
+                                sleep(Duration::from_millis(lock_failures));
+                                continue;
+                            }
+                        }
+                    }
+                };
+
+                match map_clone.try_lock() {
+                    Ok(mut map_locked) => {
+                        ready.into_iter().flatten().for_each(|(k, v)| {
+                            match map_locked.get_mut(&k) {
+                                Some(value) => {
+                                    value.merge(&v);
+                                }
+                                None => unsafe {
+                                    map_locked.insert_unique_unchecked(k, v);
+                                },
+                            }
+                        });
+
+                        break;
+                    }
+                    Err(err) => {
+                        lock_failures += 1;
+
+                        match err {
+                            TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                            TryLockError::WouldBlock => {
+                                sleep(Duration::from_millis(lock_failures));
+                                continue;
+                            }
+                        }
+                    }
+                };
+            }
+        });
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
