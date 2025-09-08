@@ -56,7 +56,7 @@ impl StationMap {
 
     fn optimum_buffer(len: u64) -> Result<usize, Box<dyn Error>> {
         let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 512);
+        let buf_capacity = len as usize / (count * 1024);
 
         Ok(buf_capacity)
     }
@@ -66,26 +66,25 @@ impl StationMap {
         let len = file.metadata()?.len();
         let optimum_buffer_size = Self::optimum_buffer(len)? as u64;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
-        let mut offset = 0u64;
+        let mut start_offset = 0u64;
 
         loop {
-            let mut offset_plus = offset + optimum_buffer_size;
-            if offset_plus.gt(&len) {
-                offset_plus = len;
+            let mut end_offset = start_offset + optimum_buffer_size;
+            if end_offset.gt(&len) {
+                end_offset = len;
             }
 
-            let mut bytes_buffer = mmap[offset as usize..offset_plus as usize].to_vec();
+            let mut bytes_buffer = mmap[start_offset as usize..end_offset as usize].to_vec();
 
-            offset = offset_plus;
-
-            let opt_next_newline_pos = mmap[offset as usize..]
+            let opt_next_newline_pos = mmap[end_offset as usize..]
                 .iter()
                 .position(|byte| byte == &b'\n');
 
             if let Some(pos) = opt_next_newline_pos {
-                bytes_buffer
-                    .extend_from_slice(&mmap[offset as usize..offset as usize + pos as usize]);
-                offset += pos as u64;
+                bytes_buffer.extend_from_slice(
+                    &mmap[end_offset as usize..end_offset as usize + pos as usize],
+                );
+                end_offset += pos as u64;
             }
 
             if bytes_buffer.is_empty() {
@@ -109,7 +108,11 @@ impl StationMap {
                                 .insert(Box::from(station), StationValues::from(float));
                         }
                     });
+
+                bytes_buffer.clear();
             });
+
+            start_offset = end_offset;
         }
 
         Ok(())
