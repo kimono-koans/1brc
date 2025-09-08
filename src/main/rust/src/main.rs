@@ -54,22 +54,15 @@ impl StationMap {
         })
     }
 
-    fn optimum_buffer(len: u64) -> Result<usize, Box<dyn Error>> {
-        let count = std::thread::available_parallelism()?.get();
-        let buf_capacity = len as usize / (count * 1024);
-
-        Ok(buf_capacity)
-    }
-
     fn read_bytes_into_map<'a>(&'a self, scope: &Scope<'a>) -> Result<(), Box<dyn Error>> {
         let file = File::open(&self.path)?;
         let len = file.metadata()?.len();
-        let optimum_buffer_size = Self::optimum_buffer(len)? as u64;
+        static BUFFER_SIZE: u64 = 2097152u64;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
         let mut start_offset = 0u64;
 
         loop {
-            let mut end_offset = start_offset + optimum_buffer_size;
+            let mut end_offset = start_offset + BUFFER_SIZE;
             if end_offset.gt(&len) {
                 end_offset = len;
             }
