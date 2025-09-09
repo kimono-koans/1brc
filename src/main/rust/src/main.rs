@@ -190,45 +190,42 @@ impl StationMap {
         scope.spawn(move |_| {
             let mut ready = Vec::new();
 
-            loop {
-                match queue_clone.lock() {
-                    Ok(mut queue_locked) => {
-                        if ready.is_empty() && hangup_clone.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        let mut taken = std::mem::take(&mut *queue_locked);
-                        ready.append(&mut taken);
-
-                        if ready.is_empty() {
-                            break;
-                        }
-                    }
-                    Err(_err) => {
-                        panic!("Thread poisoned!")
-                    }
-                };
-
-                match map_clone.lock() {
-                    Ok(mut map_locked) => {
-                        ready.into_iter().flatten().for_each(|(k, v)| {
-                            match map_locked.get_mut(&k) {
-                                Some(value) => {
-                                    value.merge(&v);
-                                }
-                                None => unsafe {
-                                    map_locked.insert_unique_unchecked(k, v);
-                                },
-                            }
-                        });
-
-                        break;
-                    }
-                    Err(_err) => {
-                        panic!("Thread poisoned!")
-                    }
-                };
+            if hangup_clone.load(Ordering::SeqCst) {
+                return;
             }
+
+            match queue_clone.lock() {
+                Ok(mut queue_locked) => {
+                    let mut taken = std::mem::take(&mut *queue_locked);
+                    ready.append(&mut taken);
+
+                    if ready.is_empty() {
+                        return;
+                    }
+                }
+                Err(_err) => {
+                    panic!("Thread poisoned!")
+                }
+            };
+
+            match map_clone.lock() {
+                Ok(mut map_locked) => {
+                    ready
+                        .into_iter()
+                        .flatten()
+                        .for_each(|(k, v)| match map_locked.get_mut(&k) {
+                            Some(value) => {
+                                value.merge(&v);
+                            }
+                            None => unsafe {
+                                map_locked.insert_unique_unchecked(k, v);
+                            },
+                        });
+                }
+                Err(_err) => {
+                    panic!("Thread poisoned!")
+                }
+            };
         });
     }
 
