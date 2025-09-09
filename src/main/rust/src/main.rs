@@ -3,10 +3,12 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
+use std::ops::Rem;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::TryLockError;
+use std::sync::atomic::AtomicBool;
 use std::thread::sleep;
 use std::time::Duration;
 use std::{error::Error, fs::File};
@@ -14,6 +16,7 @@ use std::{error::Error, fs::File};
 use hashbrown::HashMap;
 use rayon::Scope;
 use rayon::prelude::ParallelSliceMut;
+use std::sync::atomic::Ordering;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -51,6 +54,7 @@ struct StationMap {
     path: PathBuf,
     map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
     queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>>,
+    hangup: Arc<AtomicBool>,
 }
 
 impl StationMap {
@@ -63,10 +67,12 @@ impl StationMap {
                 APPROXIMATE_TOTAL_CAPACITY,
             ))),
             queue: Arc::new(Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY))),
+            hangup: Arc::new(AtomicBool::new(false)),
         })
     }
 
     fn read_bytes_into_map<'a>(&mut self, scope: &Scope) -> Result<(), Box<dyn Error>> {
+        let mut iter_count = 0;
         let file = File::open(&self.path)?;
         static BUFFER_SIZE: usize = 2_097_152;
 
@@ -82,8 +88,14 @@ impl StationMap {
             }
 
             self.spawn_bytes_worker(bytes_buffer, scope);
-            self.spawn_queue_reader(scope);
+
+            iter_count += 1;
+            if iter_count.rem(128) == 0 {
+                self.spawn_queue_reader(scope);
+            }
         }
+
+        self.hangup.store(true, Ordering::Relaxed);
 
         let mut queue_locked = self.queue.lock().unwrap();
         let taken = std::mem::take(&mut *queue_locked);
@@ -157,13 +169,22 @@ impl StationMap {
     fn spawn_queue_reader(&self, scope: &Scope) {
         let queue_clone = self.queue.clone();
         let map_clone = self.map.clone();
+        let hangup_clone = self.hangup.clone();
 
         scope.spawn(move |_| {
             let mut lock_failures = 0u64;
+            let mut ready = Vec::new();
 
             loop {
-                let ready = match queue_clone.try_lock() {
-                    Ok(mut queue_locked) => std::mem::take(&mut *queue_locked),
+                match queue_clone.try_lock() {
+                    Ok(mut queue_locked) => {
+                        if ready.is_empty() && hangup_clone.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        let mut taken = std::mem::take(&mut *queue_locked);
+                        ready.append(&mut taken);
+                    }
                     Err(err) => {
                         lock_failures += 1;
 
@@ -176,6 +197,10 @@ impl StationMap {
                         }
                     }
                 };
+
+                if ready.is_empty() {
+                    break;
+                }
 
                 match map_clone.try_lock() {
                     Ok(mut map_locked) => {
