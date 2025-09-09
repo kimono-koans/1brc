@@ -134,7 +134,7 @@ impl StationMap {
         let queue_clone = self.queue.clone();
 
         scope.spawn(move |_| {
-            let mut lock_failures = 0u64;
+            let mut lock_failures = 0u32;
             let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
 
             unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
@@ -172,7 +172,8 @@ impl StationMap {
                         match err {
                             TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
                             TryLockError::WouldBlock => {
-                                sleep(Duration::from_millis(lock_failures));
+                                let duration = 2u64.pow(lock_failures);
+                                sleep(Duration::from_millis(duration));
                                 continue;
                             }
                         }
