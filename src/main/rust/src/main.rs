@@ -34,7 +34,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .map(|arg| PathBuf::from(arg))
         .unwrap_or_else(|| home.join("Programming/1brc.data/measurements-1000000000.txt"));
 
-    let mut station_map = StationMap::new(path)?;
+    let station_map = StationMap::new(path)?;
 
     rayon::scope(|scope| {
         station_map
@@ -73,7 +73,7 @@ impl StationMap {
         })
     }
 
-    fn read_bytes_into_map<'a>(&mut self, scope: &Scope) -> Result<(), Box<dyn Error>> {
+    fn read_bytes_into_map<'a>(&self, scope: &Scope) -> Result<(), Box<dyn Error>> {
         let mut iter_count = 0;
         let file = File::open(&self.path)?;
         static BUFFER_SIZE: usize = 2_097_152;
