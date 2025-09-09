@@ -90,15 +90,15 @@ impl StationMap {
             reader.consume(bytes_buffer.len());
             reader.read_until(b'\n', &mut bytes_buffer)?;
 
+            total_bytes_read += bytes_buffer.len() as u64;
+            iter_count += 1;
+
             if bytes_buffer.is_empty() {
                 break;
             }
 
-            total_bytes_read += bytes_buffer.len() as u64;
-
             self.spawn_bytes_worker(bytes_buffer, scope);
 
-            iter_count += 1;
             if iter_count.rem(128) == 0 && total_bytes_read < near_eof {
                 self.spawn_queue_reader(scope);
             }
@@ -193,15 +193,7 @@ impl StationMap {
             }
 
             let ready = match queue_clone.lock() {
-                Ok(mut queue_locked) => {
-                    let ready = std::mem::take(&mut *queue_locked);
-
-                    if ready.is_empty() {
-                        return;
-                    }
-
-                    ready
-                }
+                Ok(mut queue_locked) => std::mem::take(&mut *queue_locked),
                 Err(_err) => {
                     panic!("Thread poisoned!")
                 }
@@ -236,7 +228,7 @@ impl StationMap {
         let map_taken = std::mem::take(&mut *map_locked);
 
         let mut sorted: Vec<_> = map_taken.into_iter().collect();
-        sorted.par_sort_unstable_by_key(|(k, _v)| k.clone());
+        sorted.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         {
             write!(&mut output_buf, "{{")?;
@@ -247,8 +239,8 @@ impl StationMap {
                 .into_iter()
                 .try_for_each(|(key, value)| write!(&mut output_buf, "{}={}, ", key, value))?;
 
-            if let Some(last) = opt_last {
-                write!(&mut output_buf, "{}={}", last.0, last.1)?;
+            if let Some((key, value)) = opt_last {
+                write!(&mut output_buf, "{}={}", key, value)?;
             }
 
             writeln!(&mut output_buf, "}}")?;
