@@ -134,7 +134,10 @@ impl StationMap {
                 .lines()
                 .filter_map(|line| line.split_once(';'))
                 .filter_map(|(station, temp)| {
-                    temp.parse::<f32>().ok().map(|parsed| (station, parsed))
+                    temp.parse::<f32>()
+                        .ok()
+                        .map(|parsed| parsed * 10.0)
+                        .map(|parsed| (station, parsed as i32))
                 })
                 .for_each(
                     |(station_name, temp_float)| match local_map.get_mut(station_name) {
@@ -273,14 +276,14 @@ impl StationMap {
 
 #[derive(Clone, Copy, Debug)]
 struct StationValues {
-    min: f32,
-    max: f32,
-    sum: f32,
+    min: i32,
+    max: i32,
+    sum: i32,
     count: u32,
 }
 
-impl From<f32> for StationValues {
-    fn from(initial_value: f32) -> Self {
+impl From<i32> for StationValues {
+    fn from(initial_value: i32) -> Self {
         Self {
             min: initial_value,
             max: initial_value,
@@ -291,7 +294,7 @@ impl From<f32> for StationValues {
 }
 
 impl StationValues {
-    fn update(&mut self, new_value: f32) {
+    fn update(&mut self, new_value: i32) {
         if self.max.lt(&new_value) {
             self.max = new_value;
         }
@@ -318,12 +321,20 @@ impl StationValues {
     }
 
     fn mean(&self) -> f32 {
-        self.sum / (self.count as f32)
+        self.sum as f32 / (self.count as f32 * 10.0)
+    }
+
+    fn min(&self) -> f32 {
+        self.min as f32 / 10.0
+    }
+
+    fn max(&self) -> f32 {
+        self.max as f32 / 10.0
     }
 }
 
 impl fmt::Display for StationValues {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.1}/{:.1}/{:.1}", self.min, self.mean(), self.max)
+        write!(f, "{:.1}/{:.1}/{:.1}", self.min(), self.mean(), self.max())
     }
 }
