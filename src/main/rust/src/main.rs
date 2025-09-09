@@ -181,11 +181,10 @@ impl StationMap {
         let hangup_clone = self.hangup.clone();
 
         scope.spawn(move |_| {
-            let mut lock_failures = 0u64;
             let mut ready = Vec::new();
 
             loop {
-                match queue_clone.try_lock() {
+                match queue_clone.lock() {
                     Ok(mut queue_locked) => {
                         if ready.is_empty() && hangup_clone.load(Ordering::SeqCst) {
                             break;
@@ -198,20 +197,12 @@ impl StationMap {
                             break;
                         }
                     }
-                    Err(err) => {
-                        lock_failures += 1;
-
-                        match err {
-                            TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
-                            TryLockError::WouldBlock => {
-                                sleep(Duration::from_millis(lock_failures));
-                                continue;
-                            }
-                        }
+                    Err(_err) => {
+                        panic!("Thread poisoned!")
                     }
                 };
 
-                match map_clone.try_lock() {
+                match map_clone.lock() {
                     Ok(mut map_locked) => {
                         ready.into_iter().flatten().for_each(|(k, v)| {
                             match map_locked.get_mut(&k) {
@@ -226,16 +217,8 @@ impl StationMap {
 
                         break;
                     }
-                    Err(err) => {
-                        lock_failures += 1;
-
-                        match err {
-                            TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
-                            TryLockError::WouldBlock => {
-                                sleep(Duration::from_millis(lock_failures));
-                                continue;
-                            }
-                        }
+                    Err(_err) => {
+                        panic!("Thread poisoned!")
                     }
                 };
             }
