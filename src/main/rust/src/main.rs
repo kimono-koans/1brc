@@ -143,18 +143,18 @@ impl StationMap {
                 .filter_map(|(station, temp)| {
                     temp.parse::<f32>()
                         .ok()
-                        .map(|parsed| parsed * 10.0)
+                        .map(|float| float * 10.0)
                         .map(|parsed| (station, parsed as i32))
                 })
                 .for_each(
-                    |(station_name, temp_float)| match local_map.get_mut(station_name) {
+                    |(station_name, temp_int)| match local_map.get_mut(station_name) {
                         Some(value) => {
-                            value.update(temp_float);
+                            value.update(temp_int);
                         }
                         None => unsafe {
                             local_map.insert_unique_unchecked(
                                 Box::from(station_name),
-                                StationValues::from(temp_float),
+                                StationValues::from(temp_int),
                             );
                         },
                     },
