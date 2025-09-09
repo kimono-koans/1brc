@@ -97,7 +97,7 @@ impl StationMap {
             }
         }
 
-        self.hangup.store(true, Ordering::Relaxed);
+        self.hangup.store(true, Ordering::SeqCst);
 
         Ok(())
     }
@@ -184,7 +184,7 @@ impl StationMap {
             loop {
                 match queue_clone.try_lock() {
                     Ok(mut queue_locked) => {
-                        if ready.is_empty() && hangup_clone.load(Ordering::Relaxed) {
+                        if ready.is_empty() && hangup_clone.load(Ordering::SeqCst) {
                             break;
                         }
 
