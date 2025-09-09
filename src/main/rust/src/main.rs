@@ -74,9 +74,14 @@ impl StationMap {
     }
 
     fn read_bytes_into_map<'a>(&self, scope: &Scope) -> Result<(), Box<dyn Error>> {
-        let mut iter_count = 0;
-        let file = File::open(&self.path)?;
         static BUFFER_SIZE: usize = 2_097_152;
+
+        let mut iter_count = 0;
+        let mut total_bytes_read = 0u64;
+
+        let file = File::open(&self.path)?;
+        let file_len = file.metadata()?.len();
+        let near_eof = file_len.saturating_sub(BUFFER_SIZE as u64 * 128);
 
         let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
 
@@ -89,10 +94,12 @@ impl StationMap {
                 break;
             }
 
+            total_bytes_read += bytes_buffer.len() as u64;
+
             self.spawn_bytes_worker(bytes_buffer, scope);
 
             iter_count += 1;
-            if iter_count.rem(128) == 0 {
+            if iter_count.rem(128) == 0 && total_bytes_read < near_eof {
                 self.spawn_queue_reader(scope);
             }
         }
