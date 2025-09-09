@@ -57,6 +57,7 @@ struct StationMap {
     map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
     queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>>,
     hangup: Arc<AtomicBool>,
+    exclusive: Arc<AtomicBool>,
 }
 
 impl StationMap {
@@ -70,6 +71,7 @@ impl StationMap {
             ))),
             queue: Arc::new(Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY))),
             hangup: Arc::new(AtomicBool::new(false)),
+            exclusive: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -99,7 +101,10 @@ impl StationMap {
 
             self.spawn_bytes_worker(bytes_buffer, scope);
 
-            if iter_count.rem(128) == 0 && total_bytes_read < near_eof {
+            if iter_count.rem(128) == 0
+                && total_bytes_read < near_eof
+                && self.exclusive.load(Ordering::SeqCst)
+            {
                 self.spawn_queue_reader(scope);
             }
         }
@@ -187,6 +192,9 @@ impl StationMap {
         let queue_clone = self.queue.clone();
         let map_clone = self.map.clone();
         let hangup_clone = self.hangup.clone();
+        let exclusive_clone = self.exclusive.clone();
+
+        self.exclusive.store(false, Ordering::SeqCst);
 
         scope.spawn(move |_| {
             if hangup_clone.load(Ordering::SeqCst) {
@@ -218,6 +226,8 @@ impl StationMap {
                     panic!("Thread poisoned!")
                 }
             };
+
+            exclusive_clone.store(true, Ordering::SeqCst);
         });
     }
 
