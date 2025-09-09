@@ -36,7 +36,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
     let station_map = StationMap::new(path)?;
 
-    rayon::scope(|scope| {
+    rayon::in_place_scope(|scope| {
         station_map
             .read_bytes_into_map(scope)
             .unwrap_or_else(|err| {
