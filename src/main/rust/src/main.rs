@@ -45,6 +45,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
             });
     });
 
+    station_map.read_queue_remainder()?;
+
     station_map.print_map()?;
 
     Ok(())
@@ -97,12 +99,16 @@ impl StationMap {
 
         self.hangup.store(true, Ordering::Relaxed);
 
+        Ok(())
+    }
+
+    fn read_queue_remainder(&self) -> Result<(), Box<dyn Error>> {
         let mut queue_locked = self.queue.lock().unwrap();
-        let taken = std::mem::take(&mut *queue_locked);
+        let queue_taken = std::mem::take(&mut *queue_locked);
 
         let mut map_locked = self.map.lock().unwrap();
 
-        taken
+        queue_taken
             .into_iter()
             .flatten()
             .for_each(|(k, v)| match map_locked.get_mut(&k) {
@@ -184,6 +190,10 @@ impl StationMap {
 
                         let mut taken = std::mem::take(&mut *queue_locked);
                         ready.append(&mut taken);
+
+                        if ready.is_empty() {
+                            break;
+                        }
                     }
                     Err(err) => {
                         lock_failures += 1;
@@ -197,10 +207,6 @@ impl StationMap {
                         }
                     }
                 };
-
-                if ready.is_empty() {
-                    break;
-                }
 
                 match map_clone.try_lock() {
                     Ok(mut map_locked) => {
@@ -237,10 +243,10 @@ impl StationMap {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
-        let mut locked = self.map.lock().unwrap();
-        let taken = std::mem::take(&mut *locked);
+        let mut map_locked = self.map.lock().unwrap();
+        let map_taken = std::mem::take(&mut *map_locked);
 
-        let mut sorted: Vec<_> = taken.into_iter().collect();
+        let mut sorted: Vec<_> = map_taken.into_iter().collect();
         sorted.par_sort_unstable_by_key(|(k, _v)| k.clone());
 
         {
