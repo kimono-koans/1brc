@@ -188,20 +188,19 @@ impl StationMap {
         let hangup_clone = self.hangup.clone();
 
         scope.spawn(move |_| {
-            let mut ready = Vec::new();
-
             if hangup_clone.load(Ordering::SeqCst) {
                 return;
             }
 
-            match queue_clone.lock() {
+            let ready = match queue_clone.lock() {
                 Ok(mut queue_locked) => {
-                    let mut taken = std::mem::take(&mut *queue_locked);
-                    ready.append(&mut taken);
+                    let ready = std::mem::take(&mut *queue_locked);
 
                     if ready.is_empty() {
                         return;
                     }
+
+                    ready
                 }
                 Err(_err) => {
                     panic!("Thread poisoned!")
