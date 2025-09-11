@@ -54,8 +54,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Mutex<HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>>>,
-    queue: Mutex<Vec<HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>>>>,
+    map: Mutex<HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>>>,
+    queue: Mutex<Vec<HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>>>>,
     hangup: AtomicBool,
     exclusive: AtomicBool,
 }
@@ -118,7 +118,7 @@ impl StationMap {
     fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
         scope.spawn(move |_| {
             let mut lock_failures = 0u32;
-            let mut local_map: HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>> =
+            let mut local_map: HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>> =
                 HashMap::with_hasher(nohash::BuildNoHashHasher::new());
 
             unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
@@ -132,16 +132,16 @@ impl StationMap {
                         .map(|parsed| (station, parsed as i32))
                 })
                 .for_each(|(station_name, temp_int)| {
-                    let uuid = Station::uuid(station_name);
+                    let uuid = Record::uuid(station_name);
 
                     match local_map.get_mut(&uuid) {
                         Some(station) => {
                             station.values.update(temp_int);
                         }
                         None => unsafe {
-                            let item = Station::new(station_name, temp_int, Some(uuid));
+                            let item = Record::new(station_name, temp_int);
 
-                            local_map.insert_unique_unchecked(item.uuid, item);
+                            local_map.insert_unique_unchecked(uuid, item);
                         },
                     }
                 });
@@ -234,19 +234,15 @@ impl StationMap {
 }
 
 #[derive(Clone, Debug)]
-struct Station {
+struct Record {
     station_name: Box<str>,
-    uuid: u64,
     values: StationValues,
 }
 
-impl Station {
-    fn new(station_name: &str, initial_value: i32, uuid: Option<u64>) -> Self {
-        let uuid = uuid.unwrap_or_else(|| Self::uuid(station_name));
-
+impl Record {
+    fn new(station_name: &str, initial_value: i32) -> Self {
         Self {
             station_name: station_name.into(),
-            uuid,
             values: StationValues::new(initial_value),
         }
     }
@@ -263,7 +259,7 @@ impl Station {
     }
 }
 
-impl fmt::Display for Station {
+impl fmt::Display for Record {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -295,27 +291,15 @@ impl StationValues {
     }
 
     fn update(&mut self, new_value: i32) {
-        if self.max.lt(&new_value) {
-            self.max = new_value;
-        }
-
-        if self.min.gt(&new_value) {
-            self.min = new_value
-        }
-
+        self.max = std::cmp::max(self.max, new_value);
+        self.min = std::cmp::min(self.min, new_value);
         self.sum += new_value;
         self.count += 1;
     }
 
     fn merge(&mut self, other: &Self) {
-        if self.max.lt(&other.max) {
-            self.max = other.max;
-        }
-
-        if self.min.gt(&other.min) {
-            self.min = other.min;
-        }
-
+        self.max = std::cmp::max(self.max, other.max);
+        self.min = std::cmp::min(self.min, other.min);
         self.sum += other.sum;
         self.count += other.count;
     }
