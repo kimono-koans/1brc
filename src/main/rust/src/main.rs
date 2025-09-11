@@ -37,15 +37,13 @@ fn try_main() -> Result<(), Box<dyn Error>> {
     let station_map = StationMap::new(path)?;
 
     rayon::in_place_scope(|scope| {
-        station_map
-            .read_bytes_into_map(scope)
-            .unwrap_or_else(|err| {
-                eprintln!("{}", err);
-                std::process::exit(1);
-            });
+        station_map.exec(scope).unwrap_or_else(|err| {
+            eprintln!("{}", err);
+            std::process::exit(1);
+        });
     });
 
-    station_map.read_queue_remainder()?;
+    station_map.read_remainder_queue_to_map()?;
 
     station_map.print_map()?;
 
@@ -75,7 +73,7 @@ impl StationMap {
         })
     }
 
-    fn read_bytes_into_map<'a>(&self, scope: &Scope) -> Result<(), Box<dyn Error>> {
+    fn exec<'a>(&self, scope: &Scope) -> Result<(), Box<dyn Error>> {
         static BUFFER_SIZE: usize = 2_097_152;
 
         let mut iter_count = 0;
@@ -99,13 +97,13 @@ impl StationMap {
                 break;
             }
 
-            self.spawn_bytes_worker(bytes_buffer, scope);
+            self.spawn_parse_buffer_worker(bytes_buffer, scope);
 
             if iter_count.rem(128) == 0
                 && total_bytes_read < near_eof
                 && self.exclusive.load(Ordering::SeqCst)
             {
-                self.spawn_queue_reader(scope);
+                self.incrementally_read_queue_to_map(scope);
             }
         }
 
@@ -114,40 +112,7 @@ impl StationMap {
         Ok(())
     }
 
-    fn read_queue_remainder(&self) -> Result<(), Box<dyn Error>> {
-        let mut queue_locked = self.queue.lock().unwrap();
-        let queue_taken = std::mem::take(&mut *queue_locked);
-
-        let mut map_locked = self.map.lock().unwrap();
-
-        queue_taken
-            .into_iter()
-            .flatten()
-            .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                Some(value) => {
-                    value.merge(&v);
-                }
-                None => unsafe {
-                    map_locked.insert_unique_unchecked(k, v);
-                },
-            });
-
-        Ok(())
-    }
-
-    // fn parse_temp(temp: &str) -> Option<i32> {
-    //     let (integer_str, decimal_str) = temp.split_once('.')?;
-
-    //     let integer = integer_str
-    //         .parse::<i32>()
-    //         .ok()
-    //         .map(|part| part.mul(10i32))?;
-    //     let decimal = decimal_str.parse::<i32>().ok()?;
-
-    //     Some(integer + decimal)
-    // }
-
-    fn spawn_bytes_worker(&self, bytes_buffer: Vec<u8>, scope: &Scope) {
+    fn spawn_parse_buffer_worker(&self, bytes_buffer: Vec<u8>, scope: &Scope) {
         let queue_clone = self.queue.clone();
 
         scope.spawn(move |_| {
@@ -201,7 +166,7 @@ impl StationMap {
         });
     }
 
-    fn spawn_queue_reader(&self, scope: &Scope) {
+    fn incrementally_read_queue_to_map(&self, scope: &Scope) {
         let queue_clone = self.queue.clone();
         let map_clone = self.map.clone();
         let hangup_clone = self.hangup.clone();
@@ -242,6 +207,27 @@ impl StationMap {
 
             exclusive_clone.store(true, Ordering::SeqCst);
         });
+    }
+
+    fn read_remainder_queue_to_map(&self) -> Result<(), Box<dyn Error>> {
+        let mut queue_locked = self.queue.lock().unwrap();
+        let queue_taken = std::mem::take(&mut *queue_locked);
+
+        let mut map_locked = self.map.lock().unwrap();
+
+        queue_taken
+            .into_iter()
+            .flatten()
+            .for_each(|(k, v)| match map_locked.get_mut(&k) {
+                Some(value) => {
+                    value.merge(&v);
+                }
+                None => unsafe {
+                    map_locked.insert_unique_unchecked(k, v);
+                },
+            });
+
+        Ok(())
     }
 
     fn print_map(self) -> Result<(), Box<dyn Error>> {
