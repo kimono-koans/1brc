@@ -126,15 +126,15 @@ impl StationMap {
             bytes_buffer
                 .split(|byte| byte == &b'\n')
                 .filter_map(|line| line.split_once(|byte| byte == &b';'))
-                .filter_map(|(station, temp)| {
-                    parse_i32(temp).ok().map(|parsed| (station, parsed as i32))
+                .filter_map(|(station_name, temp)| {
+                    parse_i32(temp).ok().map(|parsed| (station_name, parsed))
                 })
                 .for_each(|(station_name, temp_int)| {
                     let uuid = Record::uuid(station_name);
 
                     match local_map.get_mut(&uuid) {
-                        Some(station) => {
-                            station.values.update(temp_int);
+                        Some(record) => {
+                            record.update(temp_int);
                         }
                         None => unsafe {
                             let item = Record::new(station_name, temp_int);
@@ -258,6 +258,10 @@ impl Record {
 
     fn merge(&mut self, other: &Self) {
         self.values.merge(&other.values)
+    }
+
+    fn update(&mut self, new_value: i32) {
+        self.values.update(new_value)
     }
 
     fn uuid(station_name: &[u8]) -> u64 {
