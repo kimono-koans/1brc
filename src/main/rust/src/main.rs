@@ -79,7 +79,7 @@ impl StationMap {
     }
 
     fn exec<'a>(self: &Arc<Self>, scope: &Scope) -> Result<(), Box<dyn Error>> {
-        static BUFFER_SIZE: usize = 4_194_304;
+        static BUFFER_SIZE: usize = 2_097_152;
 
         let mut iter_count = 0;
         let mut total_bytes_read = 0u64;
