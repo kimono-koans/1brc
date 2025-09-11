@@ -16,3 +16,5 @@ hashbrown = { version = "0.16.0", default-features = false, features = [
     "default-hasher",
 ] }
 rayon = { version = "1.11.0", default-features = false }
+nohash = { version = "*" }
+foldhash = { version = "*" }

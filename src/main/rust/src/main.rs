@@ -1,4 +1,5 @@
 use core::fmt;
+use std::hash::BuildHasherDefault;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
@@ -14,6 +15,7 @@ use std::time::Duration;
 use std::{error::Error, fs::File};
 
 use hashbrown::HashMap;
+use nohash::NoHashHasher;
 use rayon::Scope;
 use rayon::prelude::ParallelSliceMut;
 use std::sync::atomic::Ordering;
@@ -52,8 +54,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Mutex<HashMap<Box<str>, StationValues>>,
-    queue: Mutex<Vec<HashMap<Box<str>, StationValues>>>,
+    map: Mutex<HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>>>,
+    queue: Mutex<Vec<HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>>>>,
     hangup: AtomicBool,
     exclusive: AtomicBool,
 }
@@ -64,7 +66,10 @@ impl StationMap {
 
         Ok(Arc::new(Self {
             path,
-            map: Mutex::new(HashMap::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
+            map: Mutex::new(HashMap::with_capacity_and_hasher(
+                APPROXIMATE_TOTAL_CAPACITY,
+                nohash::BuildNoHashHasher::new(),
+            )),
             queue: Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
             hangup: AtomicBool::new(false),
             exclusive: AtomicBool::new(true),
@@ -113,7 +118,8 @@ impl StationMap {
     fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
         scope.spawn(move |_| {
             let mut lock_failures = 0u32;
-            let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
+            let mut local_map: HashMap<u64, Station, BuildHasherDefault<NoHashHasher<u64>>> =
+                HashMap::with_hasher(nohash::BuildNoHashHasher::new());
 
             unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
                 .lines()
@@ -125,19 +131,20 @@ impl StationMap {
                         .map(|float| float.round())
                         .map(|parsed| (station, parsed as i32))
                 })
-                .for_each(
-                    |(station_name, temp_int)| match local_map.get_mut(station_name) {
-                        Some(value) => {
-                            value.update(temp_int);
+                .for_each(|(station_name, temp_int)| {
+                    let uuid = Station::uuid(station_name);
+
+                    match local_map.get_mut(&uuid) {
+                        Some(station) => {
+                            station.values.update(temp_int);
                         }
                         None => unsafe {
-                            local_map.insert_unique_unchecked(
-                                Box::from(station_name),
-                                StationValues::from(temp_int),
-                            );
+                            let item = Station::new(station_name, temp_int, Some(uuid));
+
+                            local_map.insert_unique_unchecked(item.uuid, item);
                         },
-                    },
-                );
+                    }
+                });
 
             loop {
                 match self.queue.try_lock() {
@@ -187,8 +194,8 @@ impl StationMap {
             .into_iter()
             .flatten()
             .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                Some(value) => {
-                    value.merge(&v);
+                Some(station) => {
+                    station.values.merge(&v.values);
                 }
                 None => unsafe {
                     map_locked.insert_unique_unchecked(k, v);
@@ -201,8 +208,8 @@ impl StationMap {
         let mut output_buf = BufWriter::new(out);
         let map_locked = self.map.lock().unwrap();
 
-        let mut sorted: Vec<_> = map_locked.iter().collect();
-        sorted.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut sorted: Vec<_> = map_locked.values().collect();
+        sorted.par_sort_unstable_by(|a, b| a.station_name.cmp(&b.station_name));
 
         {
             write!(&mut output_buf, "{{")?;
@@ -211,10 +218,10 @@ impl StationMap {
 
             sorted
                 .into_iter()
-                .try_for_each(|(key, value)| write!(&mut output_buf, "{}={}, ", key, value))?;
+                .try_for_each(|value| write!(&mut output_buf, "{}, ", value))?;
 
-            if let Some((key, value)) = opt_last {
-                write!(&mut output_buf, "{}={}", key, value)?;
+            if let Some(value) = opt_last {
+                write!(&mut output_buf, "{}", value)?;
             }
 
             writeln!(&mut output_buf, "}}")?;
@@ -226,7 +233,50 @@ impl StationMap {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
+struct Station {
+    station_name: Box<str>,
+    uuid: u64,
+    values: StationValues,
+}
+
+impl Station {
+    fn new(station_name: &str, initial_value: i32, uuid: Option<u64>) -> Self {
+        let uuid = uuid.unwrap_or_else(|| Self::uuid(station_name));
+
+        Self {
+            station_name: station_name.into(),
+            uuid,
+            values: StationValues::new(initial_value),
+        }
+    }
+
+    fn uuid(station_name: &str) -> u64 {
+        use foldhash::quality::FixedState;
+        use std::hash::{BuildHasher, Hasher};
+
+        let s = FixedState::default();
+        let mut hash = s.build_hasher();
+
+        hash.write(station_name.as_bytes());
+        hash.finish()
+    }
+}
+
+impl fmt::Display for Station {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}={:.1}/{:.1}/{:.1}",
+            self.station_name,
+            self.values.min(),
+            self.values.mean(),
+            self.values.max()
+        )
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
 struct StationValues {
     min: i32,
     max: i32,
@@ -234,8 +284,8 @@ struct StationValues {
     count: u32,
 }
 
-impl From<i32> for StationValues {
-    fn from(initial_value: i32) -> Self {
+impl StationValues {
+    fn new(initial_value: i32) -> Self {
         Self {
             min: initial_value,
             max: initial_value,
@@ -243,9 +293,7 @@ impl From<i32> for StationValues {
             count: 1,
         }
     }
-}
 
-impl StationValues {
     fn update(&mut self, new_value: i32) {
         if self.max.lt(&new_value) {
             self.max = new_value;
@@ -282,11 +330,5 @@ impl StationValues {
 
     fn max(&self) -> f32 {
         self.max as f32 / 10.0
-    }
-}
-
-impl fmt::Display for StationValues {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.1}/{:.1}/{:.1}", self.min(), self.mean(), self.max())
     }
 }
