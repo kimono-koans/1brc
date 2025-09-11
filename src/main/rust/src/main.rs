@@ -135,6 +135,18 @@ impl StationMap {
         Ok(())
     }
 
+    // fn parse_temp(temp: &str) -> Option<i32> {
+    //     let (integer_str, decimal_str) = temp.split_once('.')?;
+
+    //     let integer = integer_str
+    //         .parse::<i32>()
+    //         .ok()
+    //         .map(|part| part.mul(10i32))?;
+    //     let decimal = decimal_str.parse::<i32>().ok()?;
+
+    //     Some(integer + decimal)
+    // }
+
     fn spawn_bytes_worker(&self, bytes_buffer: Vec<u8>, scope: &Scope) {
         let queue_clone = self.queue.clone();
 
@@ -149,6 +161,7 @@ impl StationMap {
                     temp.parse::<f32>()
                         .ok()
                         .map(|float| float * 10.0)
+                        .map(|float| float.round())
                         .map(|parsed| (station, parsed as i32))
                 })
                 .for_each(
