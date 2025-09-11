@@ -329,31 +329,25 @@ impl StationValues {
 // Parses ints values between -9999 to 9999
 #[inline]
 fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
-    match value {
-        [b'-', h2, h1, h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h2, *h1, *h0, *l])?;
-            Ok(-val)
-        }
-        [b'-', h1, h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h1, *h0, *l])?;
-            Ok(-val)
-        }
-        [b'-', h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h0, *l])?;
-            Ok(-val)
-        }
-        [h2, h1, h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h2, *h1, *h0, *l])?;
-            Ok(val)
-        }
-        [h1, h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h1, *h0, *l])?;
-            Ok(val)
-        }
-        [h0, b'.', l] => {
-            let val = i32::from_ascii(&[*h0, *l])?;
-            Ok(val)
-        }
+    let mut is_negative = false;
+
+    let range = if let Some(b'-') = value.first() {
+        is_negative = true;
+        &value[1..]
+    } else {
+        &value[..]
+    };
+
+    let out = match range {
+        [h2, h1, h0, b'.', l] => i32::from_ascii(&[*h2, *h1, *h0, *l])?,
+        [h1, h0, b'.', l] => i32::from_ascii(&[*h1, *h0, *l])?,
+        [h0, b'.', l] => i32::from_ascii(&[*h0, *l])?,
         _ => unreachable!(),
+    };
+
+    if is_negative {
+        return Ok(-out);
     }
+
+    Ok(out)
 }
