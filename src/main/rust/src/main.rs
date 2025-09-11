@@ -326,7 +326,7 @@ impl StationValues {
     }
 }
 
-// Parses float values between -99.9 to 99.9
+// Parses ints values between -9999 to 9999
 #[inline]
 fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
     match value {
