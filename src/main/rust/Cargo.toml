@@ -12,7 +12,9 @@ panic = "abort"
 [dependencies]
 hashbrown = { version = "0.16.0", default-features = false, features = [
     "inline-more",
+    "rayon",
+    "default-hasher",
 ] }
 rayon = { version = "1.11.0", default-features = false }
-nohash = { version = "0.2.0", default-features = false }
-foldhash = { version = "0.2.0", default-features = false }
+nohash = { version = "0.2.0", default-features = false, features = ["std"] }
+foldhash = { version = "0.2.0", default-features = false, features = ["std"] }
