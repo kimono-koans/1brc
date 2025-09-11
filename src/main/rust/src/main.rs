@@ -184,29 +184,38 @@ impl StationMap {
     }
 
     fn read_queue_to_map(&self) {
-        let mut queue_locked = self.queue.lock().unwrap();
-        let queue_taken = std::mem::take(&mut *queue_locked);
+        let mut queue_taken = Vec::new();
+
+        let Ok(mut queue_locked) = self.queue.lock() else {
+            panic!("Thread poisoned!")
+        };
+
+        queue_taken.append(&mut *queue_locked);
         drop(queue_locked);
 
-        let mut map_locked = self.map.lock().unwrap();
-
-        queue_taken
-            .into_iter()
-            .flatten()
-            .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                Some(station) => {
-                    station.values.merge(&v.values);
-                }
-                None => unsafe {
-                    map_locked.insert_unique_unchecked(k, v);
-                },
-            });
+        if let Ok(mut map_locked) = self.map.lock() {
+            queue_taken
+                .into_iter()
+                .flatten()
+                .for_each(|(k, v)| match map_locked.get_mut(&k) {
+                    Some(station) => {
+                        station.values.merge(&v.values);
+                    }
+                    None => unsafe {
+                        map_locked.insert_unique_unchecked(k, v);
+                    },
+                });
+        } else {
+            panic!("Thread poisoned!")
+        }
     }
 
     fn print_map(&self) -> Result<(), Box<dyn Error>> {
         let out = std::io::stdout();
         let mut output_buf = BufWriter::new(out);
-        let map_locked = self.map.lock().unwrap();
+        let Ok(map_locked) = self.map.lock() else {
+            panic!("Thread poisoned!")
+        };
 
         let mut sorted: Vec<_> = map_locked.values().collect();
         sorted.par_sort_unstable_by(|a, b| a.station_name.cmp(&b.station_name));
