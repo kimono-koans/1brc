@@ -326,7 +326,7 @@ fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
         is_negative = true;
         &value[1..]
     } else {
-        &value[..]
+        &value
     };
 
     let out = match range {
