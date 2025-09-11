@@ -43,7 +43,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         });
     });
 
-    station_map.read_queue_to_map()?;
+    station_map.read_queue_to_map();
 
     station_map.print_map()?;
 
@@ -173,13 +173,13 @@ impl StationMap {
                 return;
             }
 
-            self_clone.read_queue_to_map().unwrap();
+            self_clone.read_queue_to_map();
 
             self_clone.exclusive.store(true, Ordering::SeqCst);
         });
     }
 
-    fn read_queue_to_map(&self) -> Result<(), Box<dyn Error>> {
+    fn read_queue_to_map(&self) {
         let mut queue_locked = self.queue.lock().unwrap();
         let queue_taken = std::mem::take(&mut *queue_locked);
 
@@ -196,8 +196,6 @@ impl StationMap {
                     map_locked.insert_unique_unchecked(k, v);
                 },
             });
-
-        Ok(())
     }
 
     fn print_map(&self) -> Result<(), Box<dyn Error>> {
