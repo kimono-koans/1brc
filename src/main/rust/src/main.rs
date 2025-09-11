@@ -179,6 +179,7 @@ impl StationMap {
     fn read_queue_to_map(&self) {
         let mut queue_locked = self.queue.lock().unwrap();
         let queue_taken = std::mem::take(&mut *queue_locked);
+        drop(queue_locked);
 
         let mut map_locked = self.map.lock().unwrap();
 
