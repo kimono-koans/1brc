@@ -1,26 +1,21 @@
 #![feature(int_from_ascii, slice_split_once)]
 use core::fmt;
-use std::hash::BuildHasherDefault;
-use std::io::BufRead;
-use std::io::BufReader;
-use std::io::BufWriter;
-use std::io::Write;
-use std::num::ParseIntError;
-use std::ops::Rem;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::TryLockError;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::thread::sleep;
-use std::time::Duration;
-use std::{error::Error, fs::File};
-
+use foldhash::fast::FixedState;
 use hashbrown::HashMap;
 use nohash::NoHashHasher;
 use rayon::Scope;
 use rayon::prelude::ParallelSliceMut;
+use std::error::Error;
+use std::fs::File;
+use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
+use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::num::ParseIntError;
+use std::ops::Rem;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, TryLockError};
+use std::thread::sleep;
+use std::time::Duration;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -124,7 +119,7 @@ impl StationMap {
                 HashMap::with_hasher(nohash::BuildNoHashHasher::new());
 
             bytes_buffer
-                .split(|byte| byte == &b'\n')
+                .split(|b| b == &b'\n')
                 .filter_map(|line| line.split_once(|byte| byte == &b';'))
                 .filter_map(|(station_name, temp)| {
                     parse_i32(temp).ok().map(|parsed| (station_name, parsed))
@@ -265,14 +260,11 @@ impl Record {
     }
 
     fn uuid(station_name: &[u8]) -> u64 {
-        use foldhash::quality::FixedState;
-        use std::hash::{BuildHasher, Hasher};
+        static FIXED_STATE: LazyLock<FixedState> = LazyLock::new(|| FixedState::default());
+        let mut hasher = FIXED_STATE.build_hasher();
 
-        let s = FixedState::default();
-        let mut hash = s.build_hasher();
-
-        hash.write(station_name);
-        hash.finish()
+        hasher.write(station_name);
+        hasher.finish()
     }
 }
 
