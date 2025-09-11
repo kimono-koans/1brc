@@ -197,12 +197,10 @@ impl StationMap {
 
     fn print_map(&self) -> Result<(), Box<dyn Error>> {
         let out = std::io::stdout();
-        let out_locked = out.lock();
-        let mut output_buf = BufWriter::new(out_locked);
-        let mut map_locked = self.map.lock().unwrap();
-        let map_taken = std::mem::take(&mut *map_locked);
+        let mut output_buf = BufWriter::new(out);
+        let map_locked = self.map.lock().unwrap();
 
-        let mut sorted: Vec<_> = map_taken.into_iter().collect();
+        let mut sorted: Vec<_> = map_locked.iter().collect();
         sorted.par_sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         {
