@@ -1,4 +1,4 @@
-#![feature(int_from_ascii)]
+#![feature(int_from_ascii, slice_split_once)]
 use core::fmt;
 use std::hash::BuildHasherDefault;
 use std::io::BufRead;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::TryLockError;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::thread::sleep;
 use std::time::Duration;
 use std::{error::Error, fs::File};
@@ -20,7 +21,6 @@ use hashbrown::HashMap;
 use nohash::NoHashHasher;
 use rayon::Scope;
 use rayon::prelude::ParallelSliceMut;
-use std::sync::atomic::Ordering;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -123,13 +123,11 @@ impl StationMap {
             let mut local_map: HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>> =
                 HashMap::with_hasher(nohash::BuildNoHashHasher::new());
 
-            unsafe { std::str::from_utf8_unchecked(&bytes_buffer) }
-                .lines()
-                .filter_map(|line| line.split_once(';'))
+            bytes_buffer
+                .split(|byte| byte == &b'\n')
+                .filter_map(|line| line.split_once(|byte| byte == &b';'))
                 .filter_map(|(station, temp)| {
-                    parse_i32(temp.as_bytes())
-                        .ok()
-                        .map(|parsed| (station, parsed as i32))
+                    parse_i32(temp).ok().map(|parsed| (station, parsed as i32))
                 })
                 .for_each(|(station_name, temp_int)| {
                     let uuid = Record::uuid(station_name);
@@ -225,12 +223,14 @@ impl StationMap {
 
             let opt_last = sorted.pop();
 
-            sorted
-                .into_iter()
-                .try_for_each(|value| write!(&mut output_buf, "{}, ", value))?;
+            sorted.into_iter().try_for_each(|record| {
+                output_buf.write_all(&record.station_name)?;
+                write!(&mut output_buf, "={}, ", record.values)
+            })?;
 
-            if let Some(value) = opt_last {
-                write!(&mut output_buf, "{}", value)?;
+            if let Some(record) = opt_last {
+                output_buf.write_all(&record.station_name)?;
+                write!(&mut output_buf, "={}", record.values)?;
             }
 
             writeln!(&mut output_buf, "}}")?;
@@ -244,40 +244,27 @@ impl StationMap {
 
 #[derive(Clone, Debug)]
 struct Record {
-    station_name: Box<str>,
+    station_name: Box<[u8]>,
     values: StationValues,
 }
 
 impl Record {
-    fn new(station_name: &str, initial_value: i32) -> Self {
+    fn new(station_name: &[u8], initial_value: i32) -> Self {
         Self {
             station_name: station_name.into(),
             values: StationValues::new(initial_value),
         }
     }
 
-    fn uuid(station_name: &str) -> u64 {
+    fn uuid(station_name: &[u8]) -> u64 {
         use foldhash::quality::FixedState;
         use std::hash::{BuildHasher, Hasher};
 
         let s = FixedState::default();
         let mut hash = s.build_hasher();
 
-        hash.write(station_name.as_bytes());
+        hash.write(station_name);
         hash.finish()
-    }
-}
-
-impl fmt::Display for Record {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}={:.1}/{:.1}/{:.1}",
-            self.station_name,
-            self.values.min(),
-            self.values.mean(),
-            self.values.max()
-        )
     }
 }
 
@@ -350,4 +337,10 @@ fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
     }
 
     Ok(out)
+}
+
+impl fmt::Display for StationValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}/{:.1}/{:.1}", self.min(), self.mean(), self.max())
+    }
 }
