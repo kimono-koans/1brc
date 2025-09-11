@@ -193,21 +193,21 @@ impl StationMap {
         queue_taken.append(&mut *queue_locked);
         drop(queue_locked);
 
-        if let Ok(mut map_locked) = self.map.lock() {
-            queue_taken
-                .into_iter()
-                .flatten()
-                .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                    Some(station) => {
-                        station.values.merge(&v.values);
-                    }
-                    None => unsafe {
-                        map_locked.insert_unique_unchecked(k, v);
-                    },
-                });
-        } else {
+        let Ok(mut map_locked) = self.map.lock() else {
             panic!("Thread poisoned!")
-        }
+        };
+
+        queue_taken
+            .into_iter()
+            .flatten()
+            .for_each(|(k, v)| match map_locked.get_mut(&k) {
+                Some(station) => {
+                    station.values.merge(&v.values);
+                }
+                None => unsafe {
+                    map_locked.insert_unique_unchecked(k, v);
+                },
+            });
     }
 
     fn print_map(&self) -> Result<(), Box<dyn Error>> {
