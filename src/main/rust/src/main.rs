@@ -34,7 +34,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .map(|arg| PathBuf::from(arg))
         .unwrap_or_else(|| home.join("Programming/1brc.data/measurements-1000000000.txt"));
 
-    let station_map = StationMap::new(path)?;
+    let station_map = Arc::new(StationMap::new(path)?);
 
     rayon::in_place_scope(|scope| {
         station_map.exec(scope).unwrap_or_else(|err| {
@@ -43,7 +43,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         });
     });
 
-    station_map.read_remainder_queue_to_map()?;
+    station_map.read_queue_to_map()?;
 
     station_map.print_map()?;
 
@@ -73,7 +73,7 @@ impl StationMap {
         })
     }
 
-    fn exec<'a>(&self, scope: &Scope) -> Result<(), Box<dyn Error>> {
+    fn exec<'a>(self: &Arc<Self>, scope: &Scope) -> Result<(), Box<dyn Error>> {
         static BUFFER_SIZE: usize = 2_097_152;
 
         let mut iter_count = 0;
@@ -103,7 +103,7 @@ impl StationMap {
                 && total_bytes_read < near_eof
                 && self.exclusive.load(Ordering::SeqCst)
             {
-                self.incrementally_read_queue_to_map(scope);
+                Self::incrementally_read_queue_to_map(self.clone(), scope);
             }
         }
 
@@ -166,50 +166,22 @@ impl StationMap {
         });
     }
 
-    fn incrementally_read_queue_to_map(&self, scope: &Scope) {
-        let queue_clone = self.queue.clone();
-        let map_clone = self.map.clone();
-        let hangup_clone = self.hangup.clone();
-        let exclusive_clone = self.exclusive.clone();
-
+    fn incrementally_read_queue_to_map(self: Arc<Self>, scope: &Scope) {
+        let self_clone = self.clone();
         self.exclusive.store(false, Ordering::SeqCst);
 
         scope.spawn(move |_| {
-            if hangup_clone.load(Ordering::SeqCst) {
+            if self_clone.hangup.load(Ordering::SeqCst) {
                 return;
             }
 
-            let ready = match queue_clone.lock() {
-                Ok(mut queue_locked) => std::mem::take(&mut *queue_locked),
-                Err(_err) => {
-                    panic!("Thread poisoned!")
-                }
-            };
+            self_clone.read_queue_to_map().unwrap();
 
-            match map_clone.lock() {
-                Ok(mut map_locked) => {
-                    ready
-                        .into_iter()
-                        .flatten()
-                        .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                            Some(value) => {
-                                value.merge(&v);
-                            }
-                            None => unsafe {
-                                map_locked.insert_unique_unchecked(k, v);
-                            },
-                        });
-                }
-                Err(_err) => {
-                    panic!("Thread poisoned!")
-                }
-            };
-
-            exclusive_clone.store(true, Ordering::SeqCst);
+            self_clone.exclusive.store(true, Ordering::SeqCst);
         });
     }
 
-    fn read_remainder_queue_to_map(&self) -> Result<(), Box<dyn Error>> {
+    fn read_queue_to_map(&self) -> Result<(), Box<dyn Error>> {
         let mut queue_locked = self.queue.lock().unwrap();
         let queue_taken = std::mem::take(&mut *queue_locked);
 
@@ -230,7 +202,7 @@ impl StationMap {
         Ok(())
     }
 
-    fn print_map(self) -> Result<(), Box<dyn Error>> {
+    fn print_map(&self) -> Result<(), Box<dyn Error>> {
         let out = std::io::stdout();
         let out_locked = out.lock();
         let mut output_buf = BufWriter::new(out_locked);
