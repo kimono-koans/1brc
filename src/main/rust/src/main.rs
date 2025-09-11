@@ -200,7 +200,7 @@ impl StationMap {
             .flatten()
             .for_each(|(k, v)| match map_locked.get_mut(&k) {
                 Some(station) => {
-                    station.values.merge(&v.values);
+                    station.merge(&v);
                 }
                 None => unsafe {
                     map_locked.insert_unique_unchecked(k, v);
@@ -254,6 +254,10 @@ impl Record {
             station_name: station_name.into(),
             values: StationValues::new(initial_value),
         }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.values.merge(&other.values)
     }
 
     fn uuid(station_name: &[u8]) -> u64 {
