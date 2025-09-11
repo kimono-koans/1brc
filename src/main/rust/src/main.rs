@@ -244,7 +244,7 @@ struct Record {
 }
 
 impl Record {
-    fn new(station_name: &[u8], initial_value: i32) -> Self {
+    fn new(station_name: &[u8], initial_value: i16) -> Self {
         Self {
             station_name: station_name.into(),
             values: StationValues::new(initial_value),
@@ -255,7 +255,7 @@ impl Record {
         self.values.merge(&other.values)
     }
 
-    fn update(&mut self, new_value: i32) {
+    fn update(&mut self, new_value: i16) {
         self.values.update(new_value)
     }
 
@@ -270,26 +270,26 @@ impl Record {
 
 #[derive(Clone, Debug, Copy)]
 struct StationValues {
-    min: i32,
-    max: i32,
+    min: i16,
+    max: i16,
     sum: i32,
     count: u32,
 }
 
 impl StationValues {
-    fn new(initial_value: i32) -> Self {
+    fn new(initial_value: i16) -> Self {
         Self {
             min: initial_value,
             max: initial_value,
-            sum: initial_value,
+            sum: initial_value as i32,
             count: 1,
         }
     }
 
-    fn update(&mut self, new_value: i32) {
+    fn update(&mut self, new_value: i16) {
         self.max = std::cmp::max(self.max, new_value);
         self.min = std::cmp::min(self.min, new_value);
-        self.sum += new_value;
+        self.sum += new_value as i32;
         self.count += 1;
     }
 
@@ -315,7 +315,7 @@ impl StationValues {
 
 // Parses ints values between -9999 to 9999
 #[inline]
-fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
+fn parse_i32(value: &[u8]) -> Result<i16, ParseIntError> {
     let mut is_negative = false;
 
     let range = if let Some(b'-') = value.first() {
@@ -326,8 +326,8 @@ fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
     };
 
     let out = match range {
-        [h1, h0, b'.', l] => i32::from_ascii(&[*h1, *h0, *l])?,
-        [h0, b'.', l] => i32::from_ascii(&[*h0, *l])?,
+        [h1, h0, b'.', l] => i16::from_ascii(&[*h1, *h0, *l])?,
+        [h0, b'.', l] => i16::from_ascii(&[*h0, *l])?,
         _ => unreachable!(),
     };
 
