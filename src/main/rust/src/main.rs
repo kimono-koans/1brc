@@ -79,7 +79,7 @@ impl StationMap {
     }
 
     fn exec<'a>(self: &Arc<Self>, scope: &Scope) -> Result<(), Box<dyn Error>> {
-        static BUFFER_SIZE: usize = 2_097_152;
+        static BUFFER_SIZE: usize = 4_194_304;
 
         let mut iter_count = 0;
         let mut total_bytes_read = 0u64;
@@ -225,12 +225,12 @@ impl StationMap {
 
             sorted.into_iter().try_for_each(|record| {
                 output_buf.write_all(&record.station_name)?;
-                write!(&mut output_buf, "={}, ", record.values)
+                output_buf.write_fmt(format_args!("={}, ", record.values))
             })?;
 
             if let Some(record) = opt_last {
                 output_buf.write_all(&record.station_name)?;
-                write!(&mut output_buf, "={}", record.values)?;
+                output_buf.write_fmt(format_args!("={}", record.values))?;
             }
 
             writeln!(&mut output_buf, "}}")?;
