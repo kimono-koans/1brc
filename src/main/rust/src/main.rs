@@ -34,7 +34,7 @@ fn try_main() -> Result<(), Box<dyn Error>> {
         .map(|arg| PathBuf::from(arg))
         .unwrap_or_else(|| home.join("Programming/1brc.data/measurements-1000000000.txt"));
 
-    let station_map = Arc::new(StationMap::new(path)?);
+    let station_map = StationMap::new(path)?;
 
     rayon::in_place_scope(|scope| {
         station_map.exec(scope).unwrap_or_else(|err| {
@@ -52,25 +52,23 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Arc<Mutex<HashMap<Box<str>, StationValues>>>,
-    queue: Arc<Mutex<Vec<HashMap<Box<str>, StationValues>>>>,
-    hangup: Arc<AtomicBool>,
-    exclusive: Arc<AtomicBool>,
+    map: Mutex<HashMap<Box<str>, StationValues>>,
+    queue: Mutex<Vec<HashMap<Box<str>, StationValues>>>,
+    hangup: AtomicBool,
+    exclusive: AtomicBool,
 }
 
 impl StationMap {
-    fn new(path: PathBuf) -> Result<Self, Box<dyn Error>> {
+    fn new(path: PathBuf) -> Result<Arc<Self>, Box<dyn Error>> {
         static APPROXIMATE_TOTAL_CAPACITY: usize = 512;
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             path,
-            map: Arc::new(Mutex::new(HashMap::with_capacity(
-                APPROXIMATE_TOTAL_CAPACITY,
-            ))),
-            queue: Arc::new(Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY))),
-            hangup: Arc::new(AtomicBool::new(false)),
-            exclusive: Arc::new(AtomicBool::new(true)),
-        })
+            map: Mutex::new(HashMap::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
+            queue: Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
+            hangup: AtomicBool::new(false),
+            exclusive: AtomicBool::new(true),
+        }))
     }
 
     fn exec<'a>(self: &Arc<Self>, scope: &Scope) -> Result<(), Box<dyn Error>> {
@@ -97,13 +95,13 @@ impl StationMap {
                 break;
             }
 
-            self.spawn_parse_buffer_worker(bytes_buffer, scope);
+            Self::spawn_buffer_worker(self.clone(), bytes_buffer, scope);
 
             if iter_count.rem(128) == 0
                 && total_bytes_read < near_eof
                 && self.exclusive.load(Ordering::SeqCst)
             {
-                Self::incrementally_read_queue_to_map(self.clone(), scope);
+                Self::spawn_queue_worker(self.clone(), scope);
             }
         }
 
@@ -112,8 +110,8 @@ impl StationMap {
         Ok(())
     }
 
-    fn spawn_parse_buffer_worker(&self, bytes_buffer: Vec<u8>, scope: &Scope) {
-        let queue_clone = self.queue.clone();
+    fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
+        let self_clone = self.clone();
 
         scope.spawn(move |_| {
             let mut lock_failures = 0u32;
@@ -144,7 +142,7 @@ impl StationMap {
                 );
 
             loop {
-                match queue_clone.try_lock() {
+                match self_clone.queue.try_lock() {
                     Ok(mut locked) => {
                         locked.push(local_map);
                         break;
@@ -166,7 +164,7 @@ impl StationMap {
         });
     }
 
-    fn incrementally_read_queue_to_map(self: Arc<Self>, scope: &Scope) {
+    fn spawn_queue_worker(self: Arc<Self>, scope: &Scope) {
         let self_clone = self.clone();
         self.exclusive.store(false, Ordering::SeqCst);
 
