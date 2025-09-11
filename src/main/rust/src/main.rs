@@ -1,9 +1,11 @@
+#![feature(int_from_ascii)]
 use core::fmt;
 use std::hash::BuildHasherDefault;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
+use std::num::ParseIntError;
 use std::ops::Rem;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -125,10 +127,8 @@ impl StationMap {
                 .lines()
                 .filter_map(|line| line.split_once(';'))
                 .filter_map(|(station, temp)| {
-                    temp.parse::<f32>()
+                    parse_i32(temp.as_bytes())
                         .ok()
-                        .map(|float| float * 10.0)
-                        .map(|float| float.round())
                         .map(|parsed| (station, parsed as i32))
                 })
                 .for_each(|(station_name, temp_int)| {
@@ -323,5 +323,37 @@ impl StationValues {
 
     fn max(&self) -> f32 {
         self.max as f32 / 10.0
+    }
+}
+
+// Parses float values between -99.9 to 99.9
+#[inline]
+fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
+    match value {
+        [b'-', h2, h1, h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h2, *h1, *h0, *l])?;
+            Ok(-val)
+        }
+        [b'-', h1, h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h1, *h0, *l])?;
+            Ok(-val)
+        }
+        [b'-', h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h0, *l])?;
+            Ok(-val)
+        }
+        [h2, h1, h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h2, *h1, *h0, *l])?;
+            Ok(val)
+        }
+        [h1, h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h1, *h0, *l])?;
+            Ok(val)
+        }
+        [h0, b'.', l] => {
+            let val = i32::from_ascii(&[*h0, *l])?;
+            Ok(val)
+        }
+        _ => unreachable!(),
     }
 }
