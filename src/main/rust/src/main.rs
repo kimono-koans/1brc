@@ -330,7 +330,6 @@ fn parse_i32(value: &[u8]) -> Result<i32, ParseIntError> {
     };
 
     let out = match range {
-        [h2, h1, h0, b'.', l] => i32::from_ascii(&[*h2, *h1, *h0, *l])?,
         [h1, h0, b'.', l] => i32::from_ascii(&[*h1, *h0, *l])?,
         [h0, b'.', l] => i32::from_ascii(&[*h0, *l])?,
         _ => unreachable!(),
