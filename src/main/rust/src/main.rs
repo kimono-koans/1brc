@@ -111,8 +111,6 @@ impl StationMap {
     }
 
     fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
-        let self_clone = self.clone();
-
         scope.spawn(move |_| {
             let mut lock_failures = 0u32;
             let mut local_map: HashMap<Box<str>, StationValues> = HashMap::new();
@@ -142,7 +140,7 @@ impl StationMap {
                 );
 
             loop {
-                match self_clone.queue.try_lock() {
+                match self.queue.try_lock() {
                     Ok(mut locked) => {
                         locked.push(local_map);
                         break;
@@ -165,17 +163,16 @@ impl StationMap {
     }
 
     fn spawn_queue_worker(self: Arc<Self>, scope: &Scope) {
-        let self_clone = self.clone();
         self.exclusive.store(false, Ordering::SeqCst);
 
         scope.spawn(move |_| {
-            if self_clone.hangup.load(Ordering::SeqCst) {
+            if self.hangup.load(Ordering::SeqCst) {
                 return;
             }
 
-            self_clone.read_queue_to_map();
+            self.read_queue_to_map();
 
-            self_clone.exclusive.store(true, Ordering::SeqCst);
+            self.exclusive.store(true, Ordering::SeqCst);
         });
     }
 
