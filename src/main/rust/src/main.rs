@@ -2,12 +2,11 @@
 use core::fmt;
 use foldhash::fast::FixedState;
 use hashbrown::HashMap;
-use nohash::NoHashHasher;
 use rayon::Scope;
 use rayon::prelude::ParallelSliceMut;
 use std::error::Error;
 use std::fs::File;
-use std::hash::{BuildHasher, BuildHasherDefault, Hasher};
+use std::hash::{BuildHasher, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::num::ParseIntError;
 use std::ops::Rem;
@@ -51,8 +50,8 @@ fn try_main() -> Result<(), Box<dyn Error>> {
 
 struct StationMap {
     path: PathBuf,
-    map: Mutex<HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>>>,
-    queue: Mutex<Vec<HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>>>>,
+    map: Mutex<HashMap<u64, Record>>,
+    queue: Mutex<Vec<HashMap<u64, Record>>>,
     hangup: AtomicBool,
     exclusive: AtomicBool,
 }
@@ -63,10 +62,7 @@ impl StationMap {
 
         Ok(Arc::new(Self {
             path,
-            map: Mutex::new(HashMap::with_capacity_and_hasher(
-                APPROXIMATE_TOTAL_CAPACITY,
-                nohash::BuildNoHashHasher::new(),
-            )),
+            map: Mutex::new(HashMap::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
             queue: Mutex::new(Vec::with_capacity(APPROXIMATE_TOTAL_CAPACITY)),
             hangup: AtomicBool::new(false),
             exclusive: AtomicBool::new(true),
@@ -115,8 +111,7 @@ impl StationMap {
     fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
         scope.spawn(move |_| {
             let mut lock_failures = 0u32;
-            let mut local_map: HashMap<u64, Record, BuildHasherDefault<NoHashHasher<u64>>> =
-                HashMap::with_hasher(nohash::BuildNoHashHasher::new());
+            let mut local_map: HashMap<u64, Record> = HashMap::new();
 
             bytes_buffer
                 .split(|b| b == &b'\n')

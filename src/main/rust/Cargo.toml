@@ -14,7 +14,10 @@ hashbrown = { version = "0.16.0", default-features = false, features = [
     "inline-more",
     "rayon",
     "default-hasher",
+    "nightly",
 ] }
 rayon = { version = "1.11.0", default-features = false }
-nohash = { version = "0.2.0", default-features = false, features = ["std"] }
-foldhash = { version = "0.2.0", default-features = false, features = ["std"] }
+foldhash = { version = "0.2.0", default-features = false, features = [
+    "std",
+    "nightly",
+] }

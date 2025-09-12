@@ -8,7 +8,6 @@ version = "0.1.0"
 dependencies = [
  "foldhash",
  "hashbrown",
- "nohash",
  "rayon",
 ]
 
@@ -58,12 +57,6 @@ dependencies = [
  "foldhash",
  "rayon",
 ]
-
-[[package]]
-name = "nohash"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0f889fb66f7acdf83442c35775764b51fed3c606ab9cee51500dbde2cf528ca"
 
 [[package]]
 name = "rayon"
