@@ -101,13 +101,13 @@ impl StationMap {
 
             if iter_count.rem(128) == 0
                 && total_bytes_read < near_eof
-                && self.exclusive.load(Ordering::SeqCst)
+                && self.exclusive.load(Ordering::Relaxed)
             {
                 Self::spawn_queue_worker(self.clone(), scope);
             }
         }
 
-        self.hangup.store(true, Ordering::SeqCst);
+        self.hangup.store(true, Ordering::Relaxed);
 
         Ok(())
     }
@@ -163,16 +163,16 @@ impl StationMap {
     }
 
     fn spawn_queue_worker(self: Arc<Self>, scope: &Scope) {
-        self.exclusive.store(false, Ordering::SeqCst);
+        self.exclusive.store(false, Ordering::Relaxed);
 
         scope.spawn(move |_| {
-            if self.hangup.load(Ordering::SeqCst) {
+            if self.hangup.load(Ordering::Relaxed) {
                 return;
             }
 
             self.read_queue_to_map();
 
-            self.exclusive.store(true, Ordering::SeqCst);
+            self.exclusive.store(true, Ordering::Relaxed);
         });
     }
 
