@@ -177,30 +177,58 @@ impl StationMap {
     }
 
     fn read_queue_to_map(&self) {
+        let mut lock_failures = 0u32;
         let mut queue_taken = Vec::new();
 
-        let Ok(mut queue_locked) = self.queue.lock() else {
-            panic!("Thread poisoned!")
-        };
-
-        queue_taken.append(&mut *queue_locked);
-        drop(queue_locked);
-
-        let Ok(mut map_locked) = self.map.lock() else {
-            panic!("Thread poisoned!")
-        };
-
-        queue_taken
-            .into_iter()
-            .flatten()
-            .for_each(|(k, v)| match map_locked.get_mut(&k) {
-                Some(station) => {
-                    station.merge(&v);
+        loop {
+            match self.queue.try_lock() {
+                Ok(mut queue_locked) => {
+                    queue_taken.append(&mut *queue_locked);
+                    drop(queue_locked);
+                    break;
                 }
-                None => unsafe {
-                    map_locked.insert_unique_unchecked(k, v);
-                },
-            });
+                Err(err) => {
+                    lock_failures += 1;
+                    match err {
+                        TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                        TryLockError::WouldBlock => {
+                            let duration = 2u64.pow(lock_failures);
+                            sleep(Duration::from_millis(duration));
+                            continue;
+                        }
+                    }
+                }
+            };
+        }
+
+        loop {
+            match self.map.try_lock() {
+                Ok(mut map_locked) => {
+                    queue_taken.into_iter().flatten().for_each(|(k, v)| {
+                        match map_locked.get_mut(&k) {
+                            Some(station) => {
+                                station.merge(&v);
+                            }
+                            None => unsafe {
+                                map_locked.insert_unique_unchecked(k, v);
+                            },
+                        }
+                    });
+                    break;
+                }
+                Err(err) => {
+                    lock_failures += 1;
+                    match err {
+                        TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
+                        TryLockError::WouldBlock => {
+                            let duration = 2u64.pow(lock_failures);
+                            sleep(Duration::from_millis(duration));
+                            continue;
+                        }
+                    }
+                }
+            };
+        }
     }
 
     fn print_map(&self) -> Result<(), Box<dyn Error>> {
