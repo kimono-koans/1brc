@@ -203,15 +203,15 @@ impl StationMap {
 
         let iter = sorted.chunk_by(|a, b| a.0 == b.0).filter_map(|slice| {
             if let Some((first_uuid, first_record)) = slice.first() {
-                let mut acc = Record::default();
-                acc.name(&first_record.station_name);
+                let merged = slice.iter().map(|(_k, v)| v).fold(
+                    Record::new_zeroed_values(&first_record.station_name),
+                    |mut acc, v| {
+                        acc.merge(&v);
+                        acc
+                    },
+                );
 
-                let new = slice.iter().map(|(_k, v)| v).fold(acc, |mut acc, v| {
-                    acc.merge(&v);
-                    acc
-                });
-
-                return Some((*first_uuid, new));
+                return Some((*first_uuid, merged));
             }
 
             None
@@ -304,8 +304,11 @@ impl Record {
         }
     }
 
-    fn name(&mut self, name: &[u8]) {
-        self.station_name = name.into();
+    fn new_zeroed_values(station_name: &[u8]) -> Self {
+        Self {
+            station_name: station_name.into(),
+            values: StationValues::default(),
+        }
     }
 
     fn merge(&mut self, other: &Self) {
