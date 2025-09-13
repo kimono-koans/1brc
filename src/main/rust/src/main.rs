@@ -233,6 +233,7 @@ impl StationMap {
                 }
                 Err(err) => {
                     lock_failures += 1;
+
                     match err {
                         TryLockError::Poisoned(_) => panic!("Thread poisoned!"),
                         TryLockError::WouldBlock => {
