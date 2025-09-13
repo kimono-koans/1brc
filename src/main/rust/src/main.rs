@@ -7,6 +7,7 @@ use rayon::prelude::ParallelSliceMut;
 use std::error::Error;
 use std::fs::File;
 use std::hash::{BuildHasher, Hasher};
+use std::i16;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::num::ParseIntError;
 use std::ops::Rem;
@@ -196,19 +197,42 @@ impl StationMap {
             };
         }
 
+        let mut sorted: Vec<(u64, Record)> = queue_taken.into_iter().flatten().collect();
+
+        sorted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        let chunks_iter = sorted.chunk_by(|a, b| a.0 == b.0);
+
         loop {
             match self.map.try_lock() {
                 Ok(mut map_locked) => {
-                    queue_taken.into_iter().flatten().for_each(|(k, v)| {
-                        match map_locked.get_mut(&k) {
-                            Some(station) => {
-                                station.merge(&v);
+                    chunks_iter.for_each(|slice| {
+                        let (first_uuid, first_record) = slice.first().unwrap();
+
+                        let slice_iter = slice.iter().map(|(_k, v)| v);
+
+                        match map_locked.get_mut(first_uuid) {
+                            Some(record) => {
+                                slice_iter.for_each(|v| {
+                                    record.merge(&v);
+                                });
                             }
-                            None => unsafe {
-                                map_locked.insert_unique_unchecked(k, v);
-                            },
+                            None => {
+                                let mut acc = Record::default();
+                                acc.name(&first_record.station_name);
+
+                                let new = slice_iter.fold(acc, |mut acc, v| {
+                                    acc.merge(&v);
+                                    acc
+                                });
+
+                                unsafe {
+                                    map_locked.insert_unique_unchecked(*first_uuid, new);
+                                }
+                            }
                         }
                     });
+
                     break;
                 }
                 Err(err) => {
@@ -241,7 +265,7 @@ impl StationMap {
 
             let opt_last = sorted.pop();
 
-            sorted.into_iter().try_for_each(|record| {
+            sorted.iter().try_for_each(|record| {
                 output_buf.write_all(&record.station_name)?;
                 output_buf.write_fmt(format_args!("={}, ", record.values))
             })?;
@@ -266,12 +290,25 @@ struct Record {
     values: StationValues,
 }
 
+impl Default for Record {
+    fn default() -> Self {
+        Self {
+            station_name: Box::default(),
+            values: StationValues::default(),
+        }
+    }
+}
+
 impl Record {
     fn new(station_name: &[u8], initial_value: i16) -> Self {
         Self {
             station_name: station_name.into(),
             values: StationValues::new(initial_value),
         }
+    }
+
+    fn name(&mut self, name: &[u8]) {
+        self.station_name = name.into();
     }
 
     fn merge(&mut self, other: &Self) {
@@ -297,6 +334,17 @@ struct StationValues {
     max: i16,
     sum: i32,
     count: u32,
+}
+
+impl Default for StationValues {
+    fn default() -> Self {
+        Self {
+            min: i16::MAX,
+            max: i16::MIN,
+            sum: 0,
+            count: 0,
+        }
+    }
 }
 
 impl StationValues {
