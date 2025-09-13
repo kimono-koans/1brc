@@ -58,7 +58,7 @@ struct StationMap {
 
 impl StationMap {
     fn new(path: PathBuf) -> Result<Arc<Self>, Box<dyn Error>> {
-        static APPROXIMATE_TOTAL_CAPACITY: usize = 512;
+        const APPROXIMATE_TOTAL_CAPACITY: usize = 512;
 
         Ok(Arc::new(Self {
             path,
@@ -70,7 +70,7 @@ impl StationMap {
     }
 
     fn exec<'a>(self: &Arc<Self>, scope: &Scope) -> Result<(), Box<dyn Error>> {
-        static BUFFER_SIZE: usize = 2_097_152;
+        const BUFFER_SIZE: usize = 2_097_152;
 
         let mut iter_count = 0;
         let mut total_bytes_read = 0u64;
