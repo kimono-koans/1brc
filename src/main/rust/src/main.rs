@@ -201,7 +201,7 @@ impl StationMap {
 
         sorted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
-        let iter = sorted.chunk_by(|a, b| a.0 == b.0).filter_map(|slice| {
+        let reduced = sorted.chunk_by(|a, b| a.0 == b.0).filter_map(|slice| {
             if let Some((first_uuid, first_record)) = slice.first() {
                 let merged = slice.iter().map(|(_k, v)| v).fold(
                     Record::new_zeroed_values(&first_record.station_name),
@@ -220,7 +220,7 @@ impl StationMap {
         loop {
             match self.map.try_lock() {
                 Ok(mut map_locked) => {
-                    iter.for_each(|(k, v)| match map_locked.get_mut(&k) {
+                    reduced.for_each(|(k, v)| match map_locked.get_mut(&k) {
                         Some(record) => {
                             record.merge(&v);
                         }
