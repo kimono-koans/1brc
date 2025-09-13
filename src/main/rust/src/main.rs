@@ -201,36 +201,32 @@ impl StationMap {
 
         sorted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
-        let chunks_iter = sorted.chunk_by(|a, b| a.0 == b.0);
+        let iter = sorted.chunk_by(|a, b| a.0 == b.0).filter_map(|slice| {
+            if let Some((first_uuid, first_record)) = slice.first() {
+                let mut acc = Record::default();
+                acc.name(&first_record.station_name);
+
+                let new = slice.iter().map(|(_k, v)| v).fold(acc, |mut acc, v| {
+                    acc.merge(&v);
+                    acc
+                });
+
+                return Some((*first_uuid, new));
+            }
+
+            None
+        });
 
         loop {
             match self.map.try_lock() {
                 Ok(mut map_locked) => {
-                    chunks_iter.for_each(|slice| {
-                        let (first_uuid, first_record) = slice.first().unwrap();
-
-                        let slice_iter = slice.iter().map(|(_k, v)| v);
-
-                        match map_locked.get_mut(first_uuid) {
-                            Some(record) => {
-                                slice_iter.for_each(|v| {
-                                    record.merge(&v);
-                                });
-                            }
-                            None => {
-                                let mut acc = Record::default();
-                                acc.name(&first_record.station_name);
-
-                                let new = slice_iter.fold(acc, |mut acc, v| {
-                                    acc.merge(&v);
-                                    acc
-                                });
-
-                                unsafe {
-                                    map_locked.insert_unique_unchecked(*first_uuid, new);
-                                }
-                            }
+                    iter.for_each(|(k, v)| match map_locked.get_mut(&k) {
+                        Some(record) => {
+                            record.merge(&v);
                         }
+                        None => unsafe {
+                            map_locked.insert_unique_unchecked(k, v);
+                        },
                     });
 
                     break;
