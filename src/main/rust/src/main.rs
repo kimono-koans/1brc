@@ -111,7 +111,6 @@ impl StationMap {
 
     fn spawn_buffer_worker(self: Arc<Self>, bytes_buffer: Vec<u8>, scope: &Scope) {
         scope.spawn(move |_| {
-            let mut lock_failures = 0u32;
             let mut local_map: HashMap<u64, Record> = HashMap::new();
 
             bytes_buffer
@@ -136,6 +135,8 @@ impl StationMap {
                 });
 
             loop {
+                let mut lock_failures = 0u32;
+
                 match self.queue.try_lock() {
                     Ok(mut locked) => {
                         locked.push(local_map);
@@ -173,10 +174,11 @@ impl StationMap {
     }
 
     fn read_queue_to_map(&self) {
-        let mut lock_failures = 0u32;
         let mut queue_taken = Vec::new();
 
         loop {
+            let mut lock_failures = 0u32;
+
             match self.queue.try_lock() {
                 Ok(mut queue_locked) => {
                     queue_taken.append(&mut *queue_locked);
@@ -218,6 +220,8 @@ impl StationMap {
         });
 
         loop {
+            let mut lock_failures = 0u32;
+
             match self.map.try_lock() {
                 Ok(mut map_locked) => {
                     reduced.for_each(|(k, v)| match map_locked.get_mut(&k) {
