@@ -10,13 +10,12 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
-hashbrown = { version = "0.16.0", default-features = false, features = [
+hashbrown = { version = "0.17.1", default-features = false, features = [
     "inline-more",
     "rayon",
     "default-hasher",
-    "nightly",
 ] }
-rayon = { version = "1.11.0", default-features = false }
+rayon = { version = "1.12.0", default-features = false }
 foldhash = { version = "0.2.0", default-features = false, features = [
     "std",
     "nightly",

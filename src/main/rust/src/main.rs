@@ -117,7 +117,7 @@ impl StationMap {
                 .split(|b| b == &b'\n')
                 .filter_map(|line| line.split_once(|byte| byte == &b';'))
                 .filter_map(|(station_name, temp)| {
-                    parse_i32(temp).ok().map(|parsed| (station_name, parsed))
+                    parse_i16(temp).ok().map(|parsed| (station_name, parsed))
                 })
                 .for_each(|(station_name, temp_int)| {
                     let uuid = Record::uuid(station_name);
@@ -390,7 +390,7 @@ impl StationValues {
 
 // Parses ints values between -9999 to 9999
 #[inline]
-fn parse_i32(value: &[u8]) -> Result<i16, ParseIntError> {
+fn parse_i16(value: &[u8]) -> Result<i16, ParseIntError> {
     let mut is_negative = false;
 
     let range = if let Some(b'-') = value.first() {
