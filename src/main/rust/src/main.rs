@@ -214,7 +214,7 @@ impl StationMap {
                 },
             );
 
-            return Some((*first_uuid, merged));
+            Some((first_uuid, merged))
         });
 
         loop {
@@ -222,12 +222,12 @@ impl StationMap {
 
             match self.map.try_lock() {
                 Ok(mut map_locked) => {
-                    reduced.for_each(|(k, v)| match map_locked.get_mut(&k) {
+                    reduced.for_each(|(k, v)| match map_locked.get_mut(k) {
                         Some(record) => {
                             record.merge(&v);
                         }
                         None => unsafe {
-                            map_locked.insert_unique_unchecked(k, v);
+                            map_locked.insert_unique_unchecked(*k, v);
                         },
                     });
 
